@@ -14,9 +14,16 @@ import (
 
 var Default = CI
 
-// Test runs the unit tests with the race detector.
+// Test runs the unit tests with the race detector, bypassing the test
+// cache: mage test asks about now, not about the last identical run.
+// mage -v test runs them verbosely; anything else (e.g. -run, -count)
+// goes through GOFLAGS, which the go tool reads natively.
 func Test(ctx context.Context) error {
-	return sh.RunV("go", "test", "-race", "./...")
+	args := []string{"test", "-race", "-count=1"}
+	if mg.Verbose() {
+		args = append(args, "-v")
+	}
+	return sh.RunV("go", append(args, "./...")...)
 }
 
 // Vet runs go vet.

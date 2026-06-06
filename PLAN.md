@@ -14,12 +14,12 @@ mergeable. Design: DESIGN.md.
 
 ## Phase 1 — events + engine
 
-- [ ] internal/events: StepStarted, StepFinished, OutputLine, StatusChanged
-- [ ] internal/engine: step registry; fn-identity dedup; Deps semantics
+- [x] internal/events: StepStarted, StepFinished, OutputLine, StatusChanged
+- [x] internal/engine: step registry; fn-identity dedup; Deps semantics
       (parallel, all siblings run to completion, error aggregation, panic
       capture with stack); bounded output buffers (head+tail elision);
       ctx step carrier
-- [ ] mg.Deps contract tests — the most important code in the project
+- [x] mg.Deps contract tests — the most important code in the project
 
 ## Phase 2 — subprocess plumbing
 
