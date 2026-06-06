@@ -1,0 +1,7 @@
+.*
+_*
+*.local
+!.github
+!.gitignore
+go.work
+go.work.sum
