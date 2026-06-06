@@ -11,6 +11,7 @@ func BrewCoffee()                       {}
 func OverthinkArchitecture() error      { return nil }
 func ConsultRubberDuck(context.Context) {}
 func ShipIt(context.Context) error      { return nil }
+func YOLO()                             {}
 
 func TestNormalize_AcceptsAllFourMageShapes(t *testing.T) {
 	for _, v := range []any{BrewCoffee, OverthinkArchitecture, ConsultRubberDuck, ShipIt} {
@@ -45,6 +46,7 @@ func TestNormalize_DerivesMageStyleNames(t *testing.T) {
 		{BrewCoffee, "brewCoffee"},
 		{OverthinkArchitecture, "overthinkArchitecture"},
 		{ShipIt, "shipIt"},
+		{YOLO, "yolo"}, // initialisms lower entirely; "yOLO" helps nobody
 	} {
 		fn, err := Normalize(tc.v)
 		if err != nil {

@@ -44,10 +44,13 @@ func stepFrom(ctx context.Context, fn string) *engine.Step {
 	return s
 }
 
-var noStepWarning sync.Once
+// noStepWarned tracks which primitives have already warned: once per
+// primitive per process, not a drumbeat per call.
+var noStepWarned sync.Map
 
 func warnNoStep(fn string) {
-	noStepWarning.Do(func() {
-		fmt.Fprintf(os.Stderr, "magetui: %s called with no step in context (outside magetui.Target?); falling back to the process streams\n", fn)
-	})
+	if _, loaded := noStepWarned.LoadOrStore(fn, true); loaded {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "magetui: %s called with no step in context (outside magetui.Target?); falling back to the process streams\n", fn)
 }

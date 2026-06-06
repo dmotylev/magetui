@@ -28,7 +28,7 @@ type Engine struct {
 
 	mu     sync.Mutex
 	nextID events.StepID
-	once   map[uintptr]*call
+	once   map[any]*call
 	steps  []*Step
 	failed []*Step
 }
@@ -48,7 +48,7 @@ func New(sink func(events.Event)) *Engine {
 	if sink == nil {
 		sink = func(events.Event) {}
 	}
-	return &Engine{sink: sink, once: make(map[uintptr]*call)}
+	return &Engine{sink: sink, once: make(map[any]*call)}
 }
 
 func (e *Engine) emit(ev events.Event) {
@@ -76,14 +76,18 @@ func (e *Engine) NewRoot(name, icon string) *Step {
 	return e.newStep(name, icon, 0)
 }
 
-// FinishRoot records the root step's terminal state. Non-root steps are
-// finished by RunDeps/RunStep; the root belongs to the Target lifecycle.
-func (e *Engine) FinishRoot(s *Step, started time.Time, err error) {
-	e.finishStep(s, started, err, nil, nil)
+// RunRoot executes fn as the root step s, with the same terminal-state
+// classification as any other step. Non-root steps are run by
+// RunDeps/RunStep; the root belongs to the Target lifecycle.
+func (e *Engine) RunRoot(ctx context.Context, s *Step, fn func(context.Context) error) error {
+	return e.run(ctx, s, fn)
 }
 
-// Failed returns the steps that finished with OutcomeFailed or
-// OutcomePanicked, in finish order. Target's failure replay reads this.
+// Failed returns the steps that failed directly — returned their own error,
+// or panicked — in finish order. Steps that failed only because a
+// dependency did (the FailPanic sentinel) are excluded: their failure is
+// fully explained by a descendant's entry. Target's failure replay reads
+// this (DESIGN.md §4.4 replays the culprit, not its ancestors).
 func (e *Engine) Failed() []*Step {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -95,6 +99,10 @@ func (e *Engine) Failed() []*Step {
 // OutcomePanicked. The public Deps uses it to propagate dependency
 // failures the way mg.Deps does.
 type failure struct{ err error }
+
+// Error makes an escaped sentinel — Deps called outside any Target, so no
+// step recovers it — display as its cause when mage's runtime prints it.
+func (f failure) Error() string { return f.err.Error() }
 
 // FailPanic panics with err marked as an ordinary failure.
 func FailPanic(err error) {
@@ -161,23 +169,26 @@ func (e *Engine) run(ctx context.Context, s *Step, fn func(context.Context) erro
 	started := time.Now()
 	var pval any
 	var stack []byte
+	direct := true
 	defer func() {
 		if r := recover(); r != nil {
 			if f, ok := r.(failure); ok {
+				// A dependency failed; this step is a casualty, not a cause.
 				err = f.err
+				direct = false
 			} else {
 				pval = r
 				stack = debug.Stack()
 				err = fmt.Errorf("panic: %v", r)
 			}
 		}
-		e.finishStep(s, started, err, pval, stack)
+		e.finishStep(s, started, err, pval, stack, direct)
 	}()
 	err = fn(WithStep(ctx, s))
 	return
 }
 
-func (e *Engine) finishStep(s *Step, started time.Time, err error, pval any, stack []byte) {
+func (e *Engine) finishStep(s *Step, started time.Time, err error, pval any, stack []byte, direct bool) {
 	outcome := events.OutcomeOK
 	switch {
 	case pval != nil:
@@ -185,7 +196,7 @@ func (e *Engine) finishStep(s *Step, started time.Time, err error, pval any, sta
 	case err != nil:
 		outcome = events.OutcomeFailed
 	}
-	if outcome != events.OutcomeOK {
+	if outcome != events.OutcomeOK && direct {
 		e.mu.Lock()
 		e.failed = append(e.failed, s)
 		e.mu.Unlock()

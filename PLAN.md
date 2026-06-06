@@ -28,10 +28,10 @@ mergeable. Design: DESIGN.md.
 
 ## Phase 3 — plain renderer, API wired end to end
 
-- [ ] Target lifecycle: TTY detection, MAGETUI_PROGRESS, exit codes,
+- [x] Target lifecycle: TTY detection, MAGETUI_PROGRESS, exit codes,
       failure replay
-- [ ] Plain renderer: line-per-event, path prefixes, icons
-- [ ] Dogfood checkpoint: this repo's magefile switches to magetui
+- [x] Plain renderer: line-per-event, path prefixes, icons
+- [x] Dogfood checkpoint: this repo's magefile switches to magetui
 
 ## Phase 4 — TUI renderer
 

@@ -104,8 +104,9 @@ func TestRun_SurfacesTheExitCode(t *testing.T) {
 	}
 }
 
-// The only test that calls a primitive without a step: the no-step warning
-// is once-per-process, so concentrating misuse here keeps it deterministic.
+// The only test that calls Output without a step: the no-step warning is
+// once per primitive per process, so each primitive's misuse gets exactly
+// one test that may observe it.
 func TestOutput_WithoutAStepDegradesWithAWarning(t *testing.T) {
 	t.Setenv("MAGETUI_EXEC_HELPER", "echo")
 

@@ -209,6 +209,34 @@ func TestDeps_FailPanicClassifiesAsFailureNotPanic(t *testing.T) {
 	}
 }
 
+func TestFailed_ListsCulpritsNotCasualties(t *testing.T) {
+	e, _ := newTestEngine()
+	root := e.NewRoot("root", "")
+
+	culprit := mustFn(t, func(context.Context) error {
+		return errors.New("flux capacitor missing")
+	})
+	// A parent that fails only because its dependency did, propagating via
+	// FailPanic the way the public Deps does.
+	casualty := mustFn(t, func(ctx context.Context) error {
+		if err := e.RunDeps(ctx, StepFrom(ctx), culprit); err != nil {
+			FailPanic(err)
+		}
+		return nil
+	})
+
+	if err := e.RunDeps(context.Background(), root, casualty); err == nil {
+		t.Fatal("the missing flux capacitor went unnoticed")
+	}
+	failed := e.Failed()
+	if len(failed) != 1 {
+		t.Fatalf("Failed() = %d steps, want only the culprit", len(failed))
+	}
+	if failed[0].Name() != culprit.Name {
+		t.Fatalf("Failed() blames %q, want %q", failed[0].Name(), culprit.Name)
+	}
+}
+
 func TestEvents_StartedPrecedesFinishedAndParentsAreRight(t *testing.T) {
 	e, c := newTestEngine()
 	root := e.NewRoot("all", "")

@@ -20,6 +20,10 @@ type Step struct {
 func (s *Step) ID() events.StepID { return s.id }
 func (s *Step) Name() string      { return s.name }
 
+// Engine returns the engine that owns the step. The public API uses it to
+// reach RunDeps/RunStep from a context-carried step.
+func (s *Step) Engine() *Engine { return s.e }
+
 // Output records one line of output (already newline-free) in the step's
 // buffer and emits it to the stream.
 func (s *Step) Output(origin events.Origin, text string) {

@@ -66,6 +66,14 @@ type OutputLine struct {
 	Text   string
 }
 
+// Line is one recorded line of output: the stored form of OutputLine, with
+// the step implied by the buffer it sits in. The engine's buffers record
+// Lines; renderers consume them in the failure replay (DESIGN.md §4.4).
+type Line struct {
+	Origin Origin
+	Text   string
+}
+
 // StatusChanged replaces the transient status text on a step's own line
 // (the buildx transfer-counter feel). It is presentation-only and is not
 // recorded in output buffers.
