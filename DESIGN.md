@@ -3,7 +3,7 @@
 A `docker buildx`-style live progress display for [mage](https://magefile.org) builds.
 
 Status: design accepted, pre-implementation.
-Module: `github.com/dmotylev/magetui` · Go 1.24+ · deps:
+Module: `github.com/dmotylev/magetui` · Go 1.26+ · deps:
 `charm.land/bubbletea/v2`, `charm.land/lipgloss/v2`, `golang.org/x/term`.
 
 Bubble Tea **v2** (stable since 2026-02-23) is pinned for the rebuilt

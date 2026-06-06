@@ -3,5 +3,6 @@ _*
 *.local
 !.github
 !.gitignore
+!.golangci.yml
 go.work
 go.work.sum
