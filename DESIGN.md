@@ -3,7 +3,15 @@
 A `docker buildx`-style live progress display for [mage](https://magefile.org) builds.
 
 Status: design accepted, pre-implementation.
-Module: `github.com/dmotylev/magetui` · Go 1.24+ · deps: `bubbletea`, `lipgloss`, `golang.org/x/term`.
+Module: `github.com/dmotylev/magetui` · Go 1.24+ · deps:
+`charm.land/bubbletea/v2`, `charm.land/lipgloss/v2`, `golang.org/x/term`.
+
+Bubble Tea **v2** (stable since 2026-02-23) is pinned for the rebuilt
+cell-diffing renderer and synchronized-output support — both directly relevant
+to our ~100ms-tick live region. Caveat: the TUI phase starts with a half-day
+**spike** — a ~50-line prototype proving our three load-bearing primitives in
+v2 (inline mode, `Println`-style scrollback commit, input disabled) before the
+real renderer is built on it. Fallback if the spike sours: bubbletea v1.
 
 ## 1. What magetui is
 
