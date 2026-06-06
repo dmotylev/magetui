@@ -111,10 +111,12 @@ magetui.Deps(ctx,
 )
 ```
 
-Icons ride the step through all renderers (live line, committed scrollback
-line, plain-mode prefix, failure replay). Icons are *decoration*, never
-identity or alignment anchors: width-aware optional prefixes (emoji are
-double-width; lipgloss measures correctly). `ThemeASCII` drops them.
+Icons ride the step through the TUI renderer (live line, committed
+scrollback line, failure replay). Icons are *decoration*, never identity or
+alignment anchors: width-aware optional prefixes (emoji are double-width;
+lipgloss measures correctly). `ThemeASCII` drops them, and **plain mode
+drops them too** — its first column belongs to the glyph/gutter grid
+(§4.6), and double-width emoji would break it.
 
 ### Options & environment
 
@@ -291,16 +293,36 @@ Distinct triage paths get distinct visuals:
 ### 4.6 Plain mode
 
 Stateless, append-only, log-collector safe. Active when stdout is not a TTY
-or on explicit request:
+or on explicit request. Columnar: the first column is the lifecycle glyph
+(`○` started/status, `✓`/`✗`/`‼`/`⊘` finished) or, for output lines, the
+origin gutter (`$` command, `|` stdout, `!` stderr — so `grep '^!'` finds
+all stderr); the second is the step path, right-padded to the widest path
+seen so far; the rest is unbounded.
 
 ```text
-▸ build ▸ compile  started
-🔨 build ▸ compile | go build ./...
-🔨 build ▸ compile ! pkg/foo/bar.go:12:6: undefined: Frobnicate
+○ build ▸ compile  started
+$ build ▸ compile  go build ./...
+! build ▸ compile  pkg/foo/bar.go:12:6: undefined: Frobnicate
 ✗ build ▸ compile  9.8s  exit status 2
 ```
 
-No timers, no repainting. Failure replay identical to TUI's.
+A streaming renderer has no lookahead, so the name column cannot be
+precomputed: dep lists are discovered by executing target bodies (mage's
+codegen-time target list is neither exposed at runtime nor the right set —
+the column holds unexported dep funcs, ad-hoc steps, and nested paths).
+What it does instead is the `flag.Parse` trick at the one point the
+information exists: **started lines are held** until the next non-start
+event or ~50ms, whichever comes first, so the sibling burst a `Deps` call
+announces prints at one width. A step born later and deeper still widens
+the column mid-run; lines already printed keep their narrower padding (the
+buildx answer is `#N` step numbers; we'd rather keep names). Live lines
+omit the root segment — it is the same on every line; the failure replay
+keeps it. Icons are not rendered (see §2); rejected alternatives:
+icon-in-first-column (double-width emoji break the grid), unpadded path
+prefix (ragged, the dogfood verdict), cross-run width cache (state file for
+cosmetics, cold in CI — revisit if it itches). `▸` appears only as the path
+separator — one meaning per glyph. No elapsed timers, no repainting.
+Failure replay identical to TUI's.
 
 ### 4.7 OSC 9;4 terminal progress
 

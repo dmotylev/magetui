@@ -13,10 +13,14 @@ import (
 // Fn is a normalized dependency: any of the four accepted function shapes
 // reduced to func(context.Context) error, plus the identity key used for
 // once-per-target dedup and the display metadata.
+//
+// Key is any comparable value; equal keys mean one step. Normalize keys
+// plain functions on identity (uintptr); the public API keys foreign
+// Runnable deps on their string ID. The two kinds can never collide.
 type Fn struct {
 	Name string
 	Icon string
-	Key  uintptr
+	Key  any
 	Call func(context.Context) error
 }
 
@@ -42,16 +46,18 @@ func Normalize(v any) (Fn, error) {
 	default:
 		return Fn{}, fmt.Errorf("not a valid dep type %T: deps must be func(), func() error, func(context.Context), or func(context.Context) error", v)
 	}
-	fn.Key = reflect.ValueOf(v).Pointer()
-	fn.Name = nameOf(fn.Key)
+	key := reflect.ValueOf(v).Pointer()
+	fn.Key = key
+	fn.Name = FuncName(key)
 	return fn, nil
 }
 
-// nameOf derives a display name from a function's code pointer, mage-style:
-// package path stripped, method-value suffix removed, first rune lowered
-// ("Build" → "build", "NS.Deploy" → "nS.Deploy" is avoided by lowering only
-// the last path segment's first rune).
-func nameOf(pc uintptr) string {
+// FuncName derives a display name from a function's code pointer,
+// mage-style: package path stripped, method-value suffix removed, first
+// rune lowered ("Build" → "build"). All-initialism names lower entirely
+// ("CI" → "ci", not "cI"). Target uses it to name the root step after its
+// calling target.
+func FuncName(pc uintptr) string {
 	f := runtime.FuncForPC(pc)
 	if f == nil {
 		return "anonymous"
@@ -63,6 +69,9 @@ func nameOf(pc uintptr) string {
 	}
 	if i := strings.Index(name, "."); i >= 0 {
 		name = name[i+1:]
+	}
+	if strings.IndexFunc(name, unicode.IsLower) < 0 {
+		return strings.ToLower(name)
 	}
 	return lowerFirst(name)
 }

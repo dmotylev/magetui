@@ -6,11 +6,9 @@ import (
 	"github.com/dmotylev/magetui/internal/events"
 )
 
-// Line is one recorded line of step output.
-type Line struct {
-	Origin events.Origin
-	Text   string
-}
+// Line is one recorded line of step output. Alias of events.Line so the
+// renderers' failure replay consumes the buffers' vocabulary directly.
+type Line = events.Line
 
 // buffer records a step's output within a byte budget. The first half of
 // the budget keeps the head of the output; the second half is a sliding
@@ -39,11 +37,11 @@ func (b *buffer) append(origin events.Origin, text string) {
 	defer b.mu.Unlock()
 	c := cost(text)
 	if b.headBytes+c <= b.headMax {
-		b.head = append(b.head, Line{origin, text})
+		b.head = append(b.head, Line{Origin: origin, Text: text})
 		b.headBytes += c
 		return
 	}
-	b.tail = append(b.tail, Line{origin, text})
+	b.tail = append(b.tail, Line{Origin: origin, Text: text})
 	b.tailBytes += c
 	// Evict oldest tail lines over budget, but always keep the newest line
 	// even if it alone exceeds the budget — replay must show the last thing
