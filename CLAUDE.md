@@ -21,7 +21,7 @@ trade-offs without new information.
 
 ## Conventions
 
-- Go 1.24+. Deps limited to: charm.land/bubbletea/v2, charm.land/lipgloss/v2,
+- Go 1.26+. Deps limited to: charm.land/bubbletea/v2, charm.land/lipgloss/v2,
   golang.org/x/term.
   Adding any other dependency is a design decision, not a convenience.
 - Renderer tests are golden-file based (events in, frames out); no PTY

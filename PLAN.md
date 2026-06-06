@@ -5,12 +5,12 @@ mergeable. Design: DESIGN.md.
 
 ## Phase 0 — scaffolding
 
-- [ ] magefile.go (plain mg/sh): Test, Lint, Vet targets
-- [ ] .github/workflows/ci.yml — linux: test+lint; windows: test
+- [x] magefile.go (plain mg/sh): Test, Lint, Vet targets
+- [x] .github/workflows/ci.yml — linux: test+lint; windows: test
       (portability tripwire: build tags, exec/CRLF, TTY detection;
       terminal rendering is not CI-testable — delegated to bubbletea CI,
       manual rig, and the Phase 7 VHS smoke)
-- [ ] golangci-lint config
+- [x] golangci-lint config
 
 ## Phase 1 — events + engine
 
