@@ -23,7 +23,7 @@ mergeable. Design: DESIGN.md.
 
 ## Phase 2 — subprocess plumbing
 
-- [ ] Run / RunWith / Output: per-step pipes, stdout/stderr origin tags,
+- [x] Run / RunWith / Output: per-step pipes, stdout/stderr origin tags,
       arrival-order merge, stdin passthrough, exit-code extraction
 
 ## Phase 3 — plain renderer, API wired end to end

@@ -10,12 +10,16 @@ import "time"
 // monotonically from 1; zero means "no step" (e.g. the root's parent).
 type StepID int64
 
-// Origin tells which stream an output line arrived on.
+// Origin tells where an output line came from: a subprocess stream, or
+// magetui itself echoing the command it is about to run. Renderers style
+// each differently (DESIGN.md §4.3, §4.4: `│` stdout, `┃` stderr, `$` for
+// the command echo in the failure replay).
 type Origin int8
 
 const (
 	Stdout Origin = iota
 	Stderr
+	Command
 )
 
 // Outcome is the terminal state of a finished step.
