@@ -51,9 +51,18 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: stable
+      # Not vhs-action: its ffmpeg step fetches a third-party static
+      # build and fails. apt, a pinned ttyd release, and go install
+      # are boring.
+      - name: Install vhs
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q ffmpeg
+          sudo curl -fsSL -o /usr/local/bin/ttyd \
+            https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64
+          sudo chmod +x /usr/local/bin/ttyd
+          go install github.com/charmbracelet/vhs@latest
       # Compile the magefile binary so the recording starts hot.
       - run: go tool mage -d examples -l
-      - uses: charmbracelet/vhs-action@v2
-        with:
-          path: examples/demo.tape
+      - run: vhs examples/demo.tape
       - run: grep -q '✓ demo' examples/demo.txt && ! grep -qE '✗|‼' examples/demo.txt
