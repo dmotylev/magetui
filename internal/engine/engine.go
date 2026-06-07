@@ -30,6 +30,7 @@ type Engine struct {
 	nextID events.StepID
 	once   map[any]*call
 	steps  []*Step
+	byID   map[events.StepID]*Step
 	failed []*Step
 }
 
@@ -48,7 +49,7 @@ func New(sink func(events.Event)) *Engine {
 	if sink == nil {
 		sink = func(events.Event) {}
 	}
-	return &Engine{sink: sink, once: make(map[any]*call)}
+	return &Engine{sink: sink, once: make(map[any]*call), byID: make(map[events.StepID]*Step)}
 }
 
 func (e *Engine) emit(ev events.Event) {
@@ -66,6 +67,7 @@ func (e *Engine) newStep(name, icon string, parent events.StepID) *Step {
 	e.nextID++
 	s := &Step{e: e, id: e.nextID, parent: parent, name: name, icon: icon, buf: newBuffer(budget)}
 	e.steps = append(e.steps, s)
+	e.byID[s.id] = s
 	e.mu.Unlock()
 	e.emit(events.StepStarted{ID: s.id, Parent: parent, Name: name, Icon: icon})
 	return s
@@ -92,6 +94,14 @@ func (e *Engine) Failed() []*Step {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return append([]*Step(nil), e.failed...)
+}
+
+// StepCount returns the number of steps started so far, excluding the
+// root — the denominator of the replay's "N of M steps failed" line.
+func (e *Engine) StepCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return max(0, len(e.steps)-1)
 }
 
 // failure carries an error through panic without being mistaken for a
@@ -196,17 +206,20 @@ func (e *Engine) finishStep(s *Step, started time.Time, err error, pval any, sta
 	case err != nil:
 		outcome = events.OutcomeFailed
 	}
+	e.mu.Lock()
+	// The terminal facts stay on the step too: Target reads them back
+	// after the run to assemble the failure replay (DESIGN.md §4.4).
+	s.outcome, s.err, s.stack, s.duration = outcome, err, stack, time.Since(started)
 	if outcome != events.OutcomeOK && direct {
-		e.mu.Lock()
 		e.failed = append(e.failed, s)
-		e.mu.Unlock()
 	}
+	e.mu.Unlock()
 	e.emit(events.StepFinished{
 		ID:         s.id,
 		Outcome:    outcome,
 		Err:        err,
 		PanicValue: pval,
 		Stack:      stack,
-		Duration:   time.Since(started),
+		Duration:   s.duration,
 	})
 }

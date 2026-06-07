@@ -8,10 +8,14 @@ Module: `github.com/dmotylev/magetui` · Go 1.26+ · deps:
 
 Bubble Tea **v2** (stable since 2026-02-23) is pinned for the rebuilt
 cell-diffing renderer and synchronized-output support — both directly relevant
-to our ~100ms-tick live region. Caveat: the TUI phase starts with a half-day
-**spike** — a ~50-line prototype proving our three load-bearing primitives in
-v2 (inline mode, `Println`-style scrollback commit, input disabled) before the
-real renderer is built on it. Fallback if the spike sours: bubbletea v1.
+to our ~100ms-tick live region. The Phase 4 **spike** (2026-06-07) proved the
+three load-bearing primitives in v2.0.7: inline mode is the v2 *default*
+(alt-screen is per-`View` opt-in), `tea.Println` commits multi-line blocks
+above the live region via insert-lines, and `WithInput(nil)` leaves stdin
+untouched without even entering raw mode — subprocesses inherit a normal
+terminal. No v1 fallback needed. v2 API deltas: `Init()` returns only `Cmd`;
+`View()` returns `tea.View`, not `string`. One scar for test harnesses: a
+zero-size PTY (winsize 0×0) truncates every frame to nothing.
 
 ## 1. What magetui is
 
@@ -178,16 +182,58 @@ machine-readable dump is a fourth consumer, nearly free. (Post-v1.)
 
 Three consumers behind one interface:
 
-- **TUI** — the Bubble Tea program (inline mode, `WithInput(nil)`). Its model
-  *is* the step-tree snapshot; `Update` consumes events; `View` renders the
-  live region (tree layout + degradation ladder); `tea.Println` commits closed
-  subtree blocks to scrollback.
+- **TUI** — two pieces with very different testability. The **layout core**
+  (`render.Tree`) owns the step-tree snapshot: events in, `Frame(width,
+  height, now) string` and `TakeBlocks() []string` out — no bubbletea import,
+  no goroutines, no clock (`now` is a parameter so goldens replay scripted
+  timelines). The **adapter** wraps it for bubbletea (inline mode,
+  `WithInput(nil)`): `Handle` folds events into the tree under a small mutex
+  and delivers freshly closed blocks through `Program.Println`, then nudges a
+  repaint via `Program.Send` (documented to block until the program runs and
+  no-op after exit — no forwarding goroutine needed); a thin `tea.Model`
+  handles the ~100ms tick, resize, and `View` returning the frame. Blocks
+  deliberately do *not* ride `tea.Println` commands out of `Update`, which
+  was the original plan: v2 runs every command in its own goroutine, so
+  commands from different Updates are unordered — commits would shuffle, and
+  the root line (always committed last) reliably lost its race against
+  `Quit`. `Program.Println` enqueues into the program's FIFO synchronously
+  from the caller, and the engine already serializes `Handle`: commit order
+  and every-block-before-`Quit` follow. Three v2.0.7 scars the adapter
+  absorbs: `Program.Println`, unlike `Send`, has no after-exit guard (a dead
+  program would block the engine forever — the delivery wait is paired with
+  a program-finished signal); the program writes to its output from two
+  goroutines under different locks (kernel-serialized on an `*os.File`, a
+  genuine data race on any other writer); and it interrogates the terminal
+  even though input is disabled — the kitty-keyboard query on the first
+  render plus DECRQM 2026/2027 at startup. Nobody can read those answers
+  under `WithInput(nil)`: they land in the cooked-mode stdin buffer, the
+  line discipline echoes them mid-frame as `^[[?1u`-style garbage, and the
+  next stdin reader inherits them as phantom keystrokes. The cure for the
+  last two is one wrapper at the output seam: every writer gets a
+  serializing query-stripper (the stripped features needed the unreadable
+  answers anyway — nothing is lost), and a terminal file keeps its
+  `Read`/`Close`/`Fd()` surface through it, since bubbletea finds the TTY
+  by type-asserting the output. The keyboard *set* sequences stay: they
+  elicit no responses and are reset at close. The `tea.Model` itself is
+  not unit-tested — the spike proved its primitives, the Phase 7 VHS rig
+  smoke tests it; the query stripper, a pure writer, has its own tests.
 - **Plain** — stateless line-per-event printer with step prefixes.
 - **OSC 9;4** — tiny stateful emitter (percent, error state, clear-on-exit).
 
+Renderers satisfy a small interface: `Handle(events.Event)` plus
+`Close() error` (no-op for plain; for TUI: flush remaining blocks, quit, wait
+for terminal restore). The failure replay is *not* on the interface — it is
+one shared function both modes use, called by `Target` with self-contained
+per-step facts (path, outcome, cause, captured lines, stack), so it needs no
+renderer state and renders identically everywhere.
+
 `Target` wires the three together, selects TUI vs plain (TTY detection +
-overrides), and owns shutdown ordering:
-drain events → final tree commit → failure replay → OSC clear → restore terminal.
+overrides), and owns shutdown ordering: drain events → final tree commit →
+quit + restore terminal → failure replay (plain prose below the vanished live
+region — a crash in replay code can never leave the cursor hidden) → OSC
+clear. If the TUI program itself errors, `Close` reports it and `Target`
+still prints the replay from engine buffers: a broken TUI never eats the
+build's diagnosis.
 
 ## 4. Rendering
 
@@ -200,43 +246,87 @@ The screen splits into two zones:
 - **Live region (redrawn):** the currently open tree, anchored at the bottom;
   the only repainted area.
 
-A finished step stays in the live tree until its **whole subtree closes**; the
-subtree then commits to scrollback as one indented block (final glyphs,
-durations, cause suffixes). Scrollback reads as proper trees, chunk by chunk.
-The root commits at `Target` exit.
+Commit granularity is **root-children**: a finished step waits in the live
+tree until the **root-child subtree containing it** fully closes; that
+subtree then commits as one indented block (final glyphs, exact durations,
+cause suffixes — `✗ compile  9.8s — exit status 2`), atomically, in
+completion order. Scrollback reads as proper trees, chunk by chunk. At
+`Target` exit the root commits its **own line only** — the period at the end
+of the run; it always commits, with `✗`/`‼` and cause if the root itself
+died, so scrollback alone says how the run ended.
+
+Rejected granularities: *every-subtree-immediately* (leaves are one-step
+subtrees, so every leaf commits alone — scrollback degenerates to a flat
+finish-order log and no block ever shows nesting) and *full-tree recap at
+exit* (piecewise blocks plus the replay headers — `✗ all ▸ build ▸ compile`
+per failure plus the failed-count line — already carry every path and all
+green context; a recap re-orders but adds nothing, and duplicates the tree
+on every red run. Revisit with dogfood evidence if multi-failure triage
+itches). Cost of root-children: long-lived root children keep finished
+descendants in the live region; the ladder hides completed-waiting steps
+first, so they fold away under pressure.
 
 ```text
 MID-RUN                                      LATER — `build` subtree committed
 ─────────────────────────────                ✓ build              11.0s
-⠋ all                 12.1s                    ✓ codegen           1.1s
-  ⠼ build             11.0s                    ✓ compile           9.8s
-    ✓ codegen          1.1s                  ─────────────────────────────
-    ⠙ compile          8.0s                  ⠋ all                 12.4s
-      │ go build ./pkg/...                     ⠹ test               5.5s
-      │ linking magetui                          ✓ unit             3.4s
-  ⠹ test               5.2s                      ⠸ lint             5.5s
-    ✓ unit             3.4s                        │ golangci-lint run
-    ⠸ lint             5.2s
-      │ golangci-lint run
+⠼ build               11.0s                    ✓ codegen           1.1s
+  ✓ codegen            1.1s                    ✓ compile           9.8s
+  ⠙ compile            8.0s                  ─────────────────────────────
+    │ go build ./pkg/...                     ⠹ test                5.5s
+    │ linking magetui                          ✓ unit              3.4s
+⠹ test                 5.2s                    ⠸ lint              5.5s
+  ✓ unit               3.4s                      │ golangci-lint run
+  ⠸ lint               5.2s
+    │ golangci-lint run
 ```
 
 ### 4.2 Live-region layout
 
-Each frame (~100ms tick, plus on every event and resize):
+The live region starts at the cursor and is only ever as tall as its
+content; its ceiling is the full terminal height minus one row (reserved
+against bottom-line repaint edge cases). No artificial quota below the
+physical one: the ladder is the pressure valve, so pressure — not a number —
+triggers it. Each frame (~100ms tick, plus on every event and resize) is
+recomputed fresh from `(open tree, width, height, now)` — no incremental
+layout state, so resize is just another frame:
 
-1. Walk the open tree depth-first; one row per open step line is mandatory.
+1. Walk the open tree depth-first; one row per open step is mandatory:
+   `glyph name elapsed` — spinner and live elapsed for running steps
+   (both pure functions of `now`), final glyph and exact duration for
+   finished-waiting ones. Transient status text rides after the elapsed
+   (`⠙ push  3.6s  uploading 12MB`), replaced by the next `StatusChanged`,
+   dropped at finish. Indentation is two spaces per depth, no box-drawing
+   connectors — committed blocks stay grep-clean.
+
+   The **root's own line is omitted** while it has children and no status
+   text — it repeats on every frame and says nothing, the same reasoning
+   that drops the root path segment from plain-mode live lines (§4.6).
+   Root children therefore render at depth 0, *matching committed-block
+   indentation exactly*: a commit freezes lines in place and scrolls them
+   up rather than shifting them left. The root line appears only before
+   its first child starts (something must spin) or while it carries
+   status text; its committed line at exit reports the total (§4.1).
 2. Remaining rows distribute as output tails to *running leaf* steps,
-   deepest-first, capped at `TailLines` (default 5).
-3. Degradation ladder as active count grows: 5-line tails → 3 → 1 → 0;
-   if one-row-per-step still overflows: running steps win over
-   completed-waiting-for-siblings, longest-running win among running (they're
-   what you're waiting on), and the cut is summarized as `… +N more`.
-4. SIGWINCH → recompute.
+   deepest-first, capped at the ladder's current tier (`TailLines`,
+   default 5).
+3. Degradation ladder: try tiers 5 → 3 → 1 → 0; the first tier where
+   everything fits wins. Still overflowing at 0, cut whole step rows:
+   completed-waiting first (youngest first), then running steps
+   shortest-running first — the longest-running survive to the last row
+   (they're what you're waiting on). The cut is one `… +N more` row at the
+   bottom.
+4. SIGWINCH → next frame recomputes; shrink tightens the ladder, growth
+   relaxes it — nothing was lost, only unwindowed. A zero-size frame
+   (before the first `WindowSizeMsg`) renders empty, not garbage.
 
-Tail lines are truncated to terminal width — no wrapping in the live region
-(wrapped lines break repaint row arithmetic); full lines live in the buffer
-for replay. Elapsed timers tick per frame for running steps; committed
-durations are final and exact.
+Live-region lines are hard-truncated to terminal width by rune count with a
+trailing `…` — no wrapping (wrapped lines break repaint row arithmetic).
+Truncation applies to the live region *only*: committed blocks and the
+failure replay are full-fidelity and wrap naturally — scrollback is never
+repainted, so the terminal's own wrapping is harmless there. Full lines live
+in the engine buffers for replay. Elapsed timers tick per frame for running
+steps; committed durations are final and exact. Truncation happens *before*
+styling — Phase 5 inherits geometry that never counts ANSI.
 
 ### 4.3 stdout vs stderr
 
@@ -244,6 +334,20 @@ durations are final and exact.
 preserved), each line tagged with origin. Theme renders them distinguishably:
 normal gutter `│` for stdout, error-styled `┃` for stderr (ASCII: `|` vs `!`).
 The tagging carries into plain mode and the failure replay.
+
+Lines render the moment the child writes them — the tail window scrolls
+line-by-line (verified frame-by-frame in a PTY capture). A child that
+*withholds* its output looks buffered, and no renderer can fix that: the
+bytes don't arrive. `go test ./...` is the canonical offender — it buffers
+per-package output and prints results in sorted package order, so a fast
+package's `ok` line waits for every slower package sorted before it
+(measured: first byte at 5.8s of an 8.2s run, through a bare pipe with no
+magetui involved). buildx panes show the same burst for such tools. The
+related classic — libc children switching from line- to full-buffering on
+a pipe — has a known cure, running children on a PTY, rejected here: it
+conflicts with stdin passthrough and is anything but boring. Livelier
+`go test` panes are the magefile's choice: `-v` streams the in-order
+package live, or one step per package.
 
 ### 4.4 Failures and replay
 
@@ -253,6 +357,11 @@ The tagging carries into plain mode and the failure replay.
 - At exit, after the final tree commit, a detail section replays the
   **complete** captured output of failed steps only — same rendering path as
   the live tail, just unwindowed: same gutters, `$` prefix for the command.
+  One shared implementation serves both modes; in TUI mode it is written by
+  `Target` after the program has quit and restored the terminal (§3.3). Its
+  per-failure header lines double as the failure summary: every dead path,
+  root-anchored, adjacent to its evidence — which is why exit needs no
+  full-tree recap (§4.1).
 
 ```text
 ✗ all                 14.0s
@@ -414,9 +523,15 @@ The event seam pays off:
   events in, assertions out (dedup, parallelism, error aggregation, panic
   capture, buffer bounding).
 - **Renderers**: golden-file tests — scripted event sequences in, frame
-  strings out. Bubble Tea's `View()` is a pure function: no PTY gymnastics
-  for layout tests. Covers the degradation ladder, subtree commits, width
-  truncation, themes.
+  strings out, no PTY, no bubbletea. For the TUI that means probing the
+  layout core directly: scenarios interleave events with `Frame(w, h, at)`
+  and block probes at scripted instants (time is synthetic — `Tree` never
+  reads a clock), expected frames as inline raw-string literals. Covers the
+  degradation ladder tiers and cut order, root-child commit timing,
+  rune-correct truncation, resize round-trips, status text lifecycle, the
+  zero-size frame, themes (Phase 5) — plus an invariant sweep: every probe
+  satisfies `rows ≤ height` and `runewidth ≤ width`, the two promises
+  repaint arithmetic rests on.
 - **Manual rig**: a demo magefile with artificially slow, chatty, and failing
   targets (`Brew`, `Overthink`, `DropTable`).
 

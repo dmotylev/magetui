@@ -35,11 +35,17 @@ mergeable. Design: DESIGN.md.
 
 ## Phase 4 — TUI renderer
 
-- [ ] Spike (half-day cap): ~50-line bubbletea v2 prototype proving inline
+- [x] Spike (half-day cap): ~50-line bubbletea v2 prototype proving inline
       mode, Println scrollback commit, input disabled. Fallback: v1
-- [ ] Live region: tree layout, degradation ladder, width truncation, timers
-- [ ] Subtree-block commits via tea.Println
-- [ ] Golden-file tests (events in, frames out)
+      (v2.0.7 passed all three, 2026-06-07 — see DESIGN.md intro)
+- [x] Layout core `render.Tree`: tree layout, degradation ladder, width
+      truncation, timers via injected `now`
+- [x] Root-child block commits; root line at exit; shared failure replay
+      extracted from plain, written by Target after renderer Close
+- [x] Renderer interface (Handle/Close) in Target; bubbletea adapter;
+      ProgressTTY goes live (drop the plain fallback note)
+- [x] Golden-file tests (events in, frames out; probes at scripted instants;
+      invariant sweep rows≤height, runewidth≤width)
 
 ## Phase 5 — themes + panic presentation
 
