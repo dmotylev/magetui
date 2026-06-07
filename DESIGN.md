@@ -131,7 +131,7 @@ drops them too** — its first column belongs to the glyph/gutter grid
 `WithProgressMode(Auto|TTY|Plain)`.
 
 Env overrides code: `MAGETUI_THEME` (`color|mono|greyscale`),
-`MAGETUI_PROGRESS` (`auto|tty|plain`), `MAGETUI_OSC_PROGRESS` (`on|off`).
+`MAGETUI_PROGRESS` (`auto|tty|plain`), `MAGETUI_OSC_PROGRESS` (`on|off|percent`).
 `NO_COLOR` respected (via termenv).
 
 ### stdin
@@ -213,15 +213,24 @@ Three consumers behind one interface:
   line discipline echoes them mid-frame as `^[[?1u`-style garbage, and the
   next stdin reader inherits them as phantom keystrokes. The cure for the
   last two is one wrapper at the output seam: every writer gets a
-  serializing query-stripper (the stripped features needed the unreadable
-  answers anyway — nothing is lost), and a terminal file keeps its
-  `Read`/`Close`/`Fd()` surface through it, since bubbletea finds the TTY
-  by type-asserting the output. The keyboard *set* sequences stay: they
-  elicit no responses and are reset at close. The `tea.Model` itself is
-  not unit-tested — the spike proved its primitives, the Phase 7 VHS rig
-  smoke tests it; the query stripper, a pure writer, has its own tests.
+  serializing sequence-stripper (the stripped features needed the
+  unreadable answers anyway — nothing is lost), and a terminal file keeps
+  its `Read`/`Close`/`Fd()` surface through it, since bubbletea finds the
+  TTY by type-asserting the output. The keyboard *set* sequences —
+  modifyOtherKeys(2) and the kitty disambiguate flag, emitted
+  unconditionally at renderer start — are stripped too. Phase 4 left them
+  in ("they elicit no responses and are reset at close"), which missed
+  that they change ^C semantics: a terminal honoring either protocol
+  (Ghostty, kitty, WezTerm, xterm) reports ^C as an escape sequence on
+  stdin instead of a `0x03` byte, the line discipline never raises
+  SIGINT, and the §6 interrupt handling silently dies — discovered in
+  Phase 6 when ^C stopped stopping builds in Ghostty. With input disabled
+  nobody reads the enhanced events, so stripping them restores classic ^C
+  at zero cost. The `tea.Model` itself is not unit-tested — the spike
+  proved its primitives, the Phase 7 VHS rig smoke tests it; the sequence
+  stripper, a pure writer, has its own tests.
 - **Plain** — stateless line-per-event printer with step prefixes.
-- **OSC 9;4** — tiny stateful emitter (percent, error state, clear-on-exit).
+- **OSC 9;4** — tiny stateful emitter (pulse by default, opt-in percent, error state, clear-on-exit).
 
 Renderers satisfy a small interface: `Handle(events.Event)` plus
 `Close() error` (no-op for plain; for TUI: flush remaining blocks, quit, wait
@@ -442,14 +451,46 @@ Third output channel alongside live region and scrollback. Renders as a
 progress bar in Ghostty (≥1.2), Windows Terminal (taskbar), ConEmu. Works
 while the window is unfocused — which is when builds run.
 
-- Run start → indeterminate (`9;4;3`); once the deduped step set stabilizes →
-  determinate (`9;4;1;<pct>`), `pct = completed/known`. The denominator may
-  grow as `Deps` discovers targets: the bar occasionally slows, never lies.
-- First failure → error state (`9;4;2;<pct>`) — red tint before you alt-tab.
-- Exit → clear (`9;4;0`), **always**, including on panic.
+Structurally a sibling of the renderers — a tiny stateful emitter
+consuming the same event stream, composed *around* whichever renderer is
+active: `Target` tees every event into it ahead of the renderer's
+`Handle`. It writes to **stderr**, not the render output: each emission is
+one complete escape sequence in a single `write()`, and the kernel
+serializes tty writes, so a sequence on stderr can never splice into the
+middle of a bubbletea frame on stdout — and the channel keeps working when
+the build's stdout is piped but the window is still a terminal. Sequences
+are emitted only when the encoded state actually changes; events arrive
+microseconds apart and the terminal does not need the reruns.
+
+- Default presentation: **indeterminate for the whole run** (`9;4;3`) —
+  the pulse. A build's denominator grows as `Deps` discovers targets, so a
+  filling bar stutters and occasionally walks backwards in spirit; the
+  dogfood verdict is that the pulse simply looks better. "Build running,
+  build done" is most of what a taskbar can honestly say.
+- `MAGETUI_OSC_PROGRESS=percent` opts into the determinate bar: the
+  **first `StepFinished`** flips indeterminate to `9;4;1;<pct>`,
+  `pct = finished/known` — by the first completion the initial `Deps`
+  burst has registered the whole first wave, so the denominator is honest.
+  No timers, no tuning constant (rejected: a quiet-period timer —
+  burst-hold logic for a cosmetic channel; immediately determinate — the
+  bar twitches through 0/1 → 0/14 at startup, which is exactly what the
+  indeterminate state is for). The denominator may still grow: the bar
+  occasionally slows, never lies.
+- First real failure (`✗`/`‼`, not `⊘`) → error state (`9;4;2;<pct>`) — red
+  tint before you alt-tab — and it stays tinted. This happens in **both**
+  presentations: the OSC 9;4 vocabulary has no error-indeterminate state,
+  so a failure under the pulse carries the percent too — red outranks
+  aesthetics. Interruption is *not* error state: the bar just clears at
+  exit; red is reserved for builds that broke themselves.
+- Exit → clear (`9;4;0`), **always** — success, failure, interruption,
+  panic: `Target` defers the clear the moment the emitter exists.
 - Gating: default-on only for known emitters (`TERM_PROGRAM=ghostty`,
-  `WT_SESSION`, ConEmu env); `MAGETUI_OSC_PROGRESS=on|off` overrides. Also
-  active in plain mode when running in a real terminal.
+  `WT_SESSION`, `ConEmuANSI=ON`) *and* stderr on a real terminal — so the
+  sequences stay out of CI logs even when those variables leak into the
+  environment. `MAGETUI_OSC_PROGRESS=on|off|percent` overrides detection
+  in both directions (`percent` implies on), the same precedence pattern
+  as `MAGETUI_PROGRESS` and `MAGETUI_THEME`. Active in plain mode too:
+  piped build output with a live taskbar is the point.
 
 ## 5. Themes
 
@@ -525,16 +566,67 @@ termenv.
 - **`mg.Fatal` exit codes** honored: `Target` returns errors untouched to
   mage's machinery.
 - **Nested `Target`** (target A wraps; deps on B which also wraps): detected
-  via context — the inner becomes an ordinary step instead of booting a second
-  renderer. Library-style shared targets can wrap defensively.
+  via the context's step carrier — the inner becomes an ordinary step
+  instead of booting a second renderer: named by the same caller derivation,
+  no engine, no signal watcher, no replay, error returned untouched.
+  Library-style shared targets can wrap defensively; the inner's options
+  are *silently* ignored — the outer run owns presentation, and a defensive
+  wrapper must be invisible, not chatty.
 - **Deduped failure**: a step that failed reports the same error to every
   dependent.
-- **Signals**: SIGINT/SIGTERM → cancel root context, mark interrupted steps
-  (`⊘`, "interrupted"), run full teardown (commit, replay, OSC clear, restore
-  terminal), exit with conventional code. Second SIGINT during teardown exits
-  immediately — the user outranks the renderer.
-- **Terminal restore** also runs on panic via the `Target` defer. A build tool
-  that leaves the terminal raw is unforgivable.
+- **Signals**: magetui never registers a SIGINT handler. Mage's generated
+  mainfile already owns that signal — first ^C cancels the context it
+  passed us and waits up to 5s for cleanup, second ^C force-exits — so
+  magetui *observes*: `ctx.Err() == context.Canceled` on the root context
+  is the interruption fact (rejected: a competing handler — three parties
+  racing on one signal, duplicated semantics). SIGTERM is mage's blind
+  spot, so `Target` watches it itself with a derived context (build-tagged;
+  no-op off unix); after the first SIGTERM the watcher restores the default
+  disposition, so a second kills outright — the user outranks the renderer,
+  same rule as mage's second ^C.
+- **Known wart — `kill` on the mage wrapper orphans the build.** Mage runs
+  the compiled magefile as a child and forwards no signals to it; it only
+  ignores SIGINT in its own process so the terminal's process-group
+  delivery reaches the magefile (`RunCompiled`, mage v1.17.2). SIGTERM to
+  the wrapper (or to `go tool mage`) therefore kills the wrapper alone and
+  the magefile keeps running, OSC bar pulsing. Not fixable from a library:
+  ^C works (the whole foreground group gets SIGINT), or signal the
+  magefile binary itself.
+- **Interrupted steps** are classified by error, not by clock: `⊘`
+  ("interrupted") when the step's error is `context.Canceled` *and* the
+  root context is canceled. A genuine failure landing after ^C keeps `✗`;
+  a step canceling itself while the root is live is a bug in the step
+  (rejected: everything-after-the-cancel — hides real failures that happen
+  to land late). `⊘` steps are excluded from the failure replay — their
+  cause is the user, there is nothing to diagnose — but the count line
+  acknowledges them ("interrupted, 3 of 14 steps did not finish."), so the
+  scrollback's last word is never silent about why the build stopped.
+- **^C in TUI mode degrades to plain.** bubbletea's v2.0.7 event loop
+  intercepts `InterruptMsg` before any `Update` — the model never sees it —
+  and `Run` returns `ErrInterrupted` with the terminal restored (SIGTERM
+  becomes an internal quit the same way). `Handle` notices the dead program
+  and reroutes events to a plain renderer seeded with the tree's steps, so
+  the stragglers stream as plain lines below the vanished live region until
+  the engine drains, and the replay follows as usual. Mage's "cancelling
+  mage targets..." stderr line lands harmlessly in scrollback instead of
+  mid-live-region, and a second-^C force-exit always finds the terminal
+  already cooked (rejected: keeping the TUI through the cleanup window —
+  mage's log corrupts the live region and the force-exit races terminal
+  restore; a silent tail — looks hung for up to 5s). The same path absorbs
+  *any* premature program death: a broken TUI never eats the build.
+- **Exit code**: an interrupted run comes back wrapped in an error carrying
+  `ExitStatus()` — 130 for SIGINT, 143 for SIGTERM — which mage's machinery
+  honors, the same `interface{ ExitStatus() int }` convention the
+  subprocess errors use, without magetui importing mg. The wrapper keeps
+  `Unwrap`, and the aggregate text still names any step that genuinely
+  failed before the signal landed. The "errors returned untouched" rule
+  guards real failures; the interruption aggregate is magetui's own to
+  shape (rejected: plain `ctx.Err()` — scripts can't tell interruption from
+  failure; re-raising the signal after teardown — fights mage's error path
+  mid-`runTarget`).
+- **Terminal restore** also runs on panic via the `Target` defer, and the
+  OSC clear is deferred the moment the emitter exists. A build tool that
+  leaves the terminal raw is unforgivable.
 
 ## 7. Testing
 

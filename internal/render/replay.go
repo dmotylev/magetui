@@ -31,10 +31,14 @@ type Replay struct {
 // program has quit and restored the terminal — plain prose below the
 // vanished live region, so a crash here can never leave the cursor
 // hidden. total is the number of steps the run started, excluding the
-// root. With no failures it writes nothing. Write errors are dropped:
-// a broken progress pipe must never fail a build.
-func ReplayFailures(w io.Writer, total int, failed []Replay, theme Theme) {
-	if len(failed) == 0 {
+// root; interrupted counts the steps the user's signal stopped — they get
+// no replay blocks (their cause is the user, there is nothing to
+// diagnose, DESIGN.md §6) but the count line acknowledges them, so the
+// scrollback's last word is never silent about why the build stopped.
+// With no failures and no interruption it writes nothing. Write errors
+// are dropped: a broken progress pipe must never fail a build.
+func ReplayFailures(w io.Writer, total, interrupted int, failed []Replay, theme Theme) {
+	if len(failed) == 0 && interrupted == 0 {
 		return
 	}
 	printf := func(format string, a ...any) { _, _ = fmt.Fprintf(w, format, a...) }
@@ -78,6 +82,9 @@ func ReplayFailures(w io.Writer, total int, failed []Replay, theme Theme) {
 	}
 	if count > 0 {
 		printf("%s\n", styled(theme.FailureStyle, fmt.Sprintf("%d of %d steps failed.", count, total)))
+	}
+	if interrupted > 0 {
+		printf("%s\n", styled(theme.InterruptedStyle, fmt.Sprintf("interrupted, %d of %d steps did not finish.", interrupted, total)))
 	}
 }
 

@@ -1,7 +1,7 @@
 // Package render hosts the consumers of the typed event stream
 // (DESIGN.md §3.3): the plain renderer, the TUI layout core and its
-// bubbletea adapter, the shared failure replay, and the themes that
-// style them all. The OSC 9;4 emitter arrives in Phase 6.
+// bubbletea adapter, the OSC 9;4 progress emitter, the shared failure
+// replay, and the themes that style them all.
 package render
 
 import (
@@ -70,6 +70,31 @@ type plainStep struct {
 // CI, and NO_COLOR.
 func NewPlain(w io.Writer, theme Theme) *Plain {
 	return &Plain{w: w, theme: theme, colw: theme.glyphWidth(), steps: make(map[events.StepID]*plainStep)}
+}
+
+// NewPlainOver returns a plain renderer taking over mid-run from the live
+// tree — the TUI's ^C degradation (DESIGN.md §6). Every step the tree
+// knows is pre-registered without printing, so the stragglers' paths
+// resolve and the name column opens at the width the run had already
+// reached; only events arriving from here on produce lines.
+func NewPlainOver(w io.Writer, t *Tree) *Plain {
+	p := NewPlain(w, t.theme)
+	for id, s := range t.steps {
+		ps := &plainStep{name: s.name}
+		if s.parent != nil {
+			ps.parent = s.parent.id
+		}
+		p.steps[id] = ps
+	}
+	if t.root != nil {
+		p.root = t.root.id
+	}
+	for id := range p.steps {
+		if w := utf8.RuneCountInString(p.path(id)); w > p.width {
+			p.width = w
+		}
+	}
+	return p
 }
 
 // printf writes one rendered line. Rendering is best-effort by design: a

@@ -28,3 +28,31 @@ func TestResolveMode_EnvOverridesCodeOverridesDetection(t *testing.T) {
 		})
 	}
 }
+
+func TestOSCMode_GatingTable(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		env         map[string]string
+		tty         bool
+		on, percent bool
+	}{
+		{"ghostty on a terminal pulses", map[string]string{"TERM_PROGRAM": "ghostty"}, true, true, false},
+		{"ghostty piped", map[string]string{"TERM_PROGRAM": "ghostty"}, false, false, false},
+		{"windows terminal", map[string]string{"WT_SESSION": "guid-of-some-sort"}, true, true, false},
+		{"conemu", map[string]string{"ConEmuANSI": "ON"}, true, true, false},
+		{"conemu without ansi", map[string]string{"ConEmuANSI": "OFF"}, true, false, false},
+		{"unknown terminal stays dark", nil, true, false, false},
+		{"env on outranks everything", map[string]string{"MAGETUI_OSC_PROGRESS": "on"}, false, true, false},
+		{"env percent opts into the determinate bar", map[string]string{"MAGETUI_OSC_PROGRESS": "percent"}, false, true, true},
+		{"env off outranks ghostty", map[string]string{"MAGETUI_OSC_PROGRESS": "off", "TERM_PROGRAM": "ghostty"}, true, false, false},
+		{"env gibberish falls back to detection", map[string]string{"MAGETUI_OSC_PROGRESS": "disco", "TERM_PROGRAM": "ghostty"}, true, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			getenv := func(k string) string { return tc.env[k] }
+			on, percent := oscMode(getenv, tc.tty)
+			if on != tc.on || percent != tc.percent {
+				t.Errorf("oscMode = (%v, %v), want (%v, %v)", on, percent, tc.on, tc.percent)
+			}
+		})
+	}
+}

@@ -131,7 +131,7 @@ XX ci    3.0s  exit status 1
 
 func TestThemeASCII_ReplaySpeaksASCII(t *testing.T) {
 	var out strings.Builder
-	ReplayFailures(&out, 2, []Replay{{
+	ReplayFailures(&out, 2, 0, []Replay{{
 		Path:     []string{"all", "deep", "thought"},
 		Outcome:  events.OutcomeFailed,
 		Err:      errors.New("42"),

@@ -11,8 +11,10 @@ import (
 
 // The Phase 3 dogfood checkpoint (PLAN.md): targets render through
 // magetui. Public targets wrap their body in magetui.Target; the bare
-// implementations stay plain functions so CI can Deps on them without
-// nesting Target (nested Target detection lands in Phase 6).
+// implementations stay plain functions. Nesting Target is safe since
+// Phase 6 — the inner one degrades to an ordinary step — but Deps on a
+// wrapped target would still render two levels (the Deps step plus the
+// inner Target's), so the flat impls remain the tidier tree.
 
 var Default = CI
 
@@ -36,6 +38,18 @@ func CI(ctx context.Context) error {
 	return magetui.Target(ctx, func(ctx context.Context) error {
 		magetui.Deps(ctx, vet, test)
 		return nil
+	})
+}
+
+// Linger blocks until interrupted — the manual rig for signal teardown
+// (DESIGN.md §6). Try ^C against the TUI, ^C^C, and kill -TERM — aimed
+// at the magefile binary, not the mage wrapper, which forwards nothing.
+// The comprehensive demo rig is Phase 7.
+func Linger(ctx context.Context) error {
+	return magetui.Target(ctx, func(ctx context.Context) error {
+		magetui.Status(ctx, "waiting for your signal")
+		<-ctx.Done()
+		return ctx.Err()
 	})
 }
 
