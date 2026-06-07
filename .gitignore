@@ -6,3 +6,6 @@ _*
 !.golangci.yml
 go.work
 go.work.sum
+
+# vhs smoke artifact (the GIF is committed; the txt is asserted in CI)
+examples/demo.txt

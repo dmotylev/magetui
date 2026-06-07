@@ -40,3 +40,20 @@ jobs:
         with:
           go-version: stable
       - run: go tool mage vuln
+
+  vhs:
+    # Real-PTY smoke: golden tests cover the layout core with no
+    # terminal; this is the one place bubbletea boots on a real PTY.
+    # Renders examples/demo.tape and asserts the run ended green.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      # Compile the magefile binary so the recording starts hot.
+      - run: go tool mage -d examples -l
+      - uses: charmbracelet/vhs-action@v2
+        with:
+          path: examples/demo.tape
+      - run: grep -q '✓ demo' examples/demo.txt && ! grep -qE '✗|‼' examples/demo.txt
