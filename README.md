@@ -2,7 +2,7 @@
 
 A `docker buildx`-style live progress display for [mage](https://magefile.org) builds.
 
-> **Status: design phase.** The design is settled ([DESIGN.md](DESIGN.md)); implementation has not started.
+![magetui rendering a mage build as a live dependency tree](examples/demo.gif)
 
 magetui is a Go library — not a CLI, not a mage fork. Import it in your
 magefile, wrap the targets you care about, and your build renders as a live
@@ -22,17 +22,13 @@ func All(ctx context.Context) error {
 }
 ```
 
-```text
-✓ 🔨 build            11.0s
-  ✓ codegen            1.1s
-  ✓ compile            9.8s
-─────────────────────────────
-⠋ all                 12.4s
-  ⠹ 🧪 test            5.5s
-    ✓ unit             3.4s
-    ⠸ lint             5.5s
-      │ golangci-lint run
+## Install
+
+```sh
+go get github.com/dmotylev/magetui
 ```
+
+Go 1.26+. Use it inside a magefile; mage itself is untouched and unaware.
 
 ## Principles
 
@@ -48,12 +44,48 @@ func All(ctx context.Context) error {
   automatic. Terminal progress (OSC 9;4 — Ghostty, Windows Terminal) is
   emitted where supported.
 
+## Environment
+
+Environment overrides code:
+
+| Variable | Values | Effect |
+|---|---|---|
+| `MAGETUI_PROGRESS` | `auto` \| `tty` \| `plain` | Renderer selection (default: TTY detection) |
+| `MAGETUI_THEME` | `color` \| `greyscale` \| `mono` \| `ascii` | Theme selection |
+| `MAGETUI_OSC_PROGRESS` | `on` \| `off` \| `percent` | OSC 9;4 terminal progress (default: emitter detection) |
+| `NO_COLOR` | any | Disables color underneath any theme |
+
 ## Themes
 
-Four embedded design intents — `color` (adaptive light/dark), `greyscale`,
+Four embedded design intents — `color` (default), `greyscale`,
 `mono` (no color, full glyphs), `ascii` (glyph-poor terminals) — selectable
 via `WithTheme(...)` or `MAGETUI_THEME`. Custom themes are a struct of glyph
 strings and lipgloss styles.
+
+## Examples
+
+The demo rig behind the GIF above:
+
+```sh
+mage -d examples            # demo: the all-green showcase
+mage -d examples fail       # failure replay
+mage -d examples panic      # panic presentation
+mage -d examples everything # all of it at once; try ^C
+```
+
+## Compatibility
+
+Semver covers the Go API, the `MAGETUI_*` environment variables, exit
+codes (130 on SIGINT, 143 on SIGTERM), theme names, and plain mode's
+structural contract — one line per event, `grep '^!'` finds stderr, `$`
+marks commands. Exact rendered output (padding, spacing, TUI frames,
+theme glyphs and palettes) is presentation, not API, and may change in
+any minor. The full surface: DESIGN.md §10.
+
+## Contributing
+
+DESIGN.md is the source of truth for what magetui is; CONTRIBUTING.md
+for how it changes.
 
 ## License
 
