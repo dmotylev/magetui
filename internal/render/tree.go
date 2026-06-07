@@ -7,21 +7,14 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"charm.land/lipgloss/v2"
+
 	"github.com/dmotylev/magetui/internal/events"
 )
 
-// Phase 5 moves these into Theme alongside plain's set. The live gutters
-// are the Unicode pair from DESIGN.md §4.3 — color carries no signal in
-// Phase 4, so the glyph weight (│ vs ┃) does all the work. Plain keeps
-// its ASCII grid; one package, two vocabularies, until themes unify them.
-var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-
 const (
 	spinnerInterval = 100 * time.Millisecond
-	treeGutterOut   = "│"
-	treeGutterErr   = "┃"
 	treeIndent      = "  "
-	ellipsis        = "…"
 )
 
 // ladder is the degradation ladder of tail tiers: the first tier where
@@ -38,7 +31,13 @@ const tailKeep = 5
 // runs no goroutines, and reads no clock — `now` is always a parameter,
 // so tests replay scripted timelines. The adapter serializes calls; Tree
 // itself is not safe for concurrent use.
+//
+// Geometry never counts ANSI: rows are built as styled spans, alignment
+// and truncation work on the spans' rune counts, and the palette is
+// applied only when a finished line renders to a string (DESIGN.md §4.2).
 type Tree struct {
+	theme  Theme
+	gw     int // the glyph column: widest lifecycle glyph or spinner frame
 	steps  map[events.StepID]*treeStep
 	root   *treeStep
 	seq    int
@@ -64,9 +63,14 @@ type treeStep struct {
 	tail     []events.Line // last tailKeep lines only
 }
 
-// NewTree returns an empty layout core.
-func NewTree() *Tree {
-	return &Tree{steps: make(map[events.StepID]*treeStep)}
+// NewTree returns an empty layout core rendering in theme. An empty
+// spinner falls back to the default frames — a custom theme must not be
+// able to crash the build over cosmetics (DESIGN.md §2).
+func NewTree(theme Theme) *Tree {
+	if len(theme.Spinner) == 0 {
+		theme.Spinner = ThemeColor.Spinner
+	}
+	return &Tree{theme: theme, gw: theme.glyphWidth(), steps: make(map[events.StepID]*treeStep)}
 }
 
 // Handle folds one event into the tree. now timestamps StepStarted — the
@@ -128,7 +132,7 @@ func (t *Tree) commitClosed(s *treeStep) {
 			}
 		}
 		t.root.children = nil
-		t.blocks = append(t.blocks, strings.Join(renderRows([]row{stepRow(t.root, 0, time.Time{})}), "\n"))
+		t.blocks = append(t.blocks, renderLines(t.layout([]row{t.stepRow(t.root, 0, time.Time{})})))
 		return
 	}
 	rootChild := s
@@ -163,13 +167,13 @@ func (t *Tree) commitSubtree(s *treeStep) {
 	var rows []row
 	var walk func(n *treeStep, depth int)
 	walk = func(n *treeStep, depth int) {
-		rows = append(rows, stepRow(n, depth, time.Time{}))
+		rows = append(rows, t.stepRow(n, depth, time.Time{}))
 		for _, c := range n.children {
 			walk(c, depth+1)
 		}
 	}
 	walk(s, 0)
-	t.blocks = append(t.blocks, strings.Join(renderRows(rows), "\n"))
+	t.blocks = append(t.blocks, renderLines(t.layout(rows)))
 }
 
 // TakeBlocks drains the committed scrollback blocks, oldest first. The
@@ -232,11 +236,14 @@ func (t *Tree) Frame(width, height int, now time.Time) string {
 	var rows []row
 	if tier >= 0 {
 		for _, e := range entries {
-			rows = append(rows, stepRow(e.s, e.depth, now))
+			rows = append(rows, t.stepRow(e.s, e.depth, now))
 			if tier > 0 && tailable(e.s) {
 				tail := e.s.tail[max(0, len(e.s.tail)-tier):]
 				for _, ln := range tail {
-					rows = append(rows, row{raw: strings.Repeat(treeIndent, e.depth+1) + treeGutter(ln.Origin) + " " + ln.Text})
+					rows = append(rows, row{raw: []span{
+						{text: strings.Repeat(treeIndent, e.depth+1)},
+						{text: t.theme.gutter(ln.Origin) + " " + ln.Text, style: t.theme.gutterStyle(ln.Origin)},
+					}})
 				}
 			}
 		}
@@ -265,17 +272,19 @@ func (t *Tree) Frame(width, height int, now time.Time) string {
 		}
 		for _, e := range entries {
 			if !cut[e.s] {
-				rows = append(rows, stepRow(e.s, e.depth, now))
+				rows = append(rows, t.stepRow(e.s, e.depth, now))
 			}
 		}
-		rows = append(rows, row{raw: fmt.Sprintf("%s +%d more", ellipsis, len(entries)-keep)})
+		more := fmt.Sprintf("%s +%d more", t.theme.Ellipsis, len(entries)-keep)
+		rows = append(rows, row{raw: []span{{text: more, style: t.theme.TailText}}})
 	}
 
-	lines := renderRows(rows)
+	lines := t.layout(rows)
+	rendered := make([]string, len(lines))
 	for i, line := range lines {
-		lines[i] = truncate(line, width)
+		rendered[i] = renderLine(truncateSpans(line, width, t.theme.Ellipsis))
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(rendered, "\n")
 }
 
 // tailable says whether a step gets output tail rows: running leaves only
@@ -285,47 +294,67 @@ func tailable(s *treeStep) bool {
 	return !s.done && len(s.children) == 0 && len(s.tail) > 0
 }
 
+// span is one styled segment of a line. Geometry works on the text's
+// rune count; the style is applied only at the final render.
+type span struct {
+	text  string
+	style lipgloss.Style
+}
+
 // row is one live-region or block line before alignment: step rows carry
 // prefix/dur/extra and participate in the duration column; raw rows
 // (tails, the +N more cut marker) pass through untouched.
 type row struct {
-	prefix string // indent + glyph + icon? + name
-	dur    string
-	extra  string // "" | "  status" | " — cause"
-	raw    string
+	prefix []span // indent + glyph + icon? + name
+	dur    string // unstyled; the layout styles the whole column
+	extra  []span // nothing | status | dash + cause
+	raw    []span
 }
 
 // stepRow renders one step's own line parts. now is unused for finished
-// steps — their glyph and duration are final.
-func stepRow(s *treeStep, depth int, now time.Time) row {
-	var g, dur, extra string
+// steps — their glyph and duration are final. The glyph pads to the
+// theme's glyph column so mixed-width repertoires (an ASCII OK beside a
+// one-column spinner frame) keep the names aligned.
+func (t *Tree) stepRow(s *treeStep, depth int, now time.Time) row {
+	th := t.theme
+	var g string
+	var gs lipgloss.Style
+	var dur string
+	var extra []span
 	if s.done {
-		g = glyph(s.outcome)
+		g, gs = th.glyph(s.outcome), th.glyphStyle(s.outcome)
 		dur = fmt.Sprintf("%.1fs", s.duration.Seconds())
 		if cause := causeOf(s); cause != "" {
-			extra = " — " + cause
+			extra = []span{{text: " " + th.Dash + " "}, {text: cause, style: gs}}
 		}
 	} else {
 		elapsed := max(now.Sub(s.started), 0)
-		g = spinnerFrames[int(elapsed/spinnerInterval)%len(spinnerFrames)]
+		g, gs = th.Spinner[int(elapsed/spinnerInterval)%len(th.Spinner)], th.SpinnerStyle
 		dur = fmt.Sprintf("%.1fs", elapsed.Seconds())
 		if s.status != "" {
-			extra = "  " + s.status
+			extra = []span{{text: "  "}, {text: s.status, style: th.Status}}
 		}
 	}
 	name := s.name
-	if s.icon != "" {
+	if th.Icons && s.icon != "" {
 		name = s.icon + " " + name
 	}
-	return row{prefix: strings.Repeat(treeIndent, depth) + g + " " + name, dur: dur, extra: extra}
+	prefix := []span{
+		{text: strings.Repeat(treeIndent, depth)},
+		{text: g, style: gs},
+		{text: strings.Repeat(" ", t.gw-utf8.RuneCountInString(g)) + " "},
+		{text: name, style: th.Name},
+	}
+	return row{prefix: prefix, dur: dur, extra: extra}
 }
 
-// causeOf renders the failure cause riding a bad final glyph.
+// causeOf renders the failure cause riding a bad final glyph, flattened
+// to one line — a joined multi-error must not break row arithmetic.
 func causeOf(s *treeStep) string {
 	switch s.outcome {
 	case events.OutcomeFailed, events.OutcomePanicked:
 		if s.err != nil {
-			return s.err.Error()
+			return oneLine(s.err.Error())
 		}
 	case events.OutcomeInterrupted:
 		return "interrupted"
@@ -334,49 +363,90 @@ func causeOf(s *treeStep) string {
 	return ""
 }
 
-// renderRows aligns step rows on a shared duration column — durations
+// layout aligns step rows on a shared duration column — durations
 // right-aligned two spaces past the widest prefix — and passes raw rows
 // through. Alignment is per render unit (one frame, one block); widths
-// are rune counts, the Phase 4 measure.
-func renderRows(rows []row) []string {
+// are rune counts, never ANSI.
+func (t *Tree) layout(rows []row) [][]span {
 	maxPrefix, maxDur := 0, 0
 	for _, r := range rows {
 		if r.dur == "" {
 			continue
 		}
-		maxPrefix = max(maxPrefix, utf8.RuneCountInString(r.prefix))
+		maxPrefix = max(maxPrefix, spanWidth(r.prefix))
 		maxDur = max(maxDur, len(r.dur)) // durations are ASCII
 	}
-	lines := make([]string, 0, len(rows))
+	lines := make([][]span, 0, len(rows))
 	for _, r := range rows {
 		if r.dur == "" {
 			lines = append(lines, r.raw)
 			continue
 		}
-		pad := strings.Repeat(" ", maxPrefix-utf8.RuneCountInString(r.prefix))
-		dpad := strings.Repeat(" ", maxDur-len(r.dur))
-		lines = append(lines, r.prefix+pad+"  "+dpad+r.dur+r.extra)
+		line := slices.Clone(r.prefix)
+		line = append(line, span{text: strings.Repeat(" ", maxPrefix-spanWidth(r.prefix)+2+maxDur-len(r.dur))})
+		line = append(line, span{text: r.dur, style: t.theme.Duration})
+		line = append(line, r.extra...)
+		lines = append(lines, line)
 	}
 	return lines
 }
 
-// truncate hard-cuts a line to width runes with a trailing ellipsis —
-// live-region only; wrapped lines would break repaint row arithmetic.
-func truncate(s string, width int) string {
-	if utf8.RuneCountInString(s) <= width {
-		return s
+// spanWidth is a line's display width in runes.
+func spanWidth(spans []span) int {
+	w := 0
+	for _, sp := range spans {
+		w += utf8.RuneCountInString(sp.text)
 	}
-	return string([]rune(s)[:width-1]) + ellipsis
+	return w
 }
 
-// treeGutter is the live-region origin marker (DESIGN.md §4.3).
-func treeGutter(o events.Origin) string {
-	switch o {
-	case events.Stderr:
-		return treeGutterErr
-	case events.Command:
-		return gutterCmd
-	case events.Stdout:
+// renderLine styles one finished line — the only place the palette
+// touches text.
+func renderLine(spans []span) string {
+	var b strings.Builder
+	for _, sp := range spans {
+		if sp.text == "" {
+			continue
+		}
+		b.WriteString(styled(sp.style, sp.text))
 	}
-	return treeGutterOut
+	return b.String()
+}
+
+// renderLines joins a block's lines.
+func renderLines(lines [][]span) string {
+	rendered := make([]string, len(lines))
+	for i, line := range lines {
+		rendered[i] = renderLine(line)
+	}
+	return strings.Join(rendered, "\n")
+}
+
+// truncateSpans hard-cuts a line to width runes with a trailing ellipsis
+// — live-region only; wrapped lines would break repaint row arithmetic.
+// An ellipsis wider than the line's budget is skipped rather than worn.
+func truncateSpans(spans []span, width int, ellipsis string) []span {
+	if spanWidth(spans) <= width {
+		return spans
+	}
+	keep := width - utf8.RuneCountInString(ellipsis)
+	if keep < 0 {
+		keep, ellipsis = width, ""
+	}
+	out := make([]span, 0, len(spans)+1)
+	n := 0
+	for _, sp := range spans {
+		r := utf8.RuneCountInString(sp.text)
+		if n+r <= keep {
+			out = append(out, sp)
+			n += r
+			continue
+		}
+		out = append(out, span{text: string([]rune(sp.text)[:keep-n]), style: sp.style})
+		break
+	}
+	if ellipsis != "" {
+		out = append(out, span{text: ellipsis})
+	}
+	return out
 }

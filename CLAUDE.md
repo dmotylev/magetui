@@ -22,6 +22,7 @@ trade-offs without new information.
 ## Conventions
 
 - Go 1.26+. Deps limited to: charm.land/bubbletea/v2, charm.land/lipgloss/v2,
+  github.com/charmbracelet/colorprofile (lipgloss's writer companion),
   golang.org/x/term.
   Adding any other dependency is a design decision, not a convenience.
 - Renderer tests are golden-file based (events in, frames out); no PTY

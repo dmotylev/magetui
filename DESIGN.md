@@ -4,7 +4,10 @@ A `docker buildx`-style live progress display for [mage](https://magefile.org) b
 
 Status: design accepted, pre-implementation.
 Module: `github.com/dmotylev/magetui` · Go 1.26+ · deps:
-`charm.land/bubbletea/v2`, `charm.land/lipgloss/v2`, `golang.org/x/term`.
+`charm.land/bubbletea/v2`, `charm.land/lipgloss/v2`, `golang.org/x/term`,
+plus `github.com/charmbracelet/colorprofile` (lipgloss's companion
+writer, already in bubbletea's graph) so plain mode and the post-exit
+replay degrade colors without booting a program.
 
 Bubble Tea **v2** (stable since 2026-02-23) is pinned for the rebuilt
 cell-diffing renderer and synchronized-output support — both directly relevant
@@ -457,31 +460,49 @@ work):
 ```go
 type Theme struct {
     // Glyphs
-    Spinner   []string // animation frames
-    OK, Fail, Skip, Panic    string
-    GutterOut, GutterErr     string // │ vs ┃ ; ASCII: | vs !
-    Branch, Elbow            string // tree connectors
-    StackGutter              string
+    Spinner                      []string // animation frames
+    Start                        string   // plain mode: started/status lines
+    OK, Fail, Panic, Interrupted string
+    GutterOut, GutterErr         string // │ vs ┃ ; ASCII: | vs !
+    GutterCmd, StackGutter       string
+    PathSep, Ellipsis            string
+    Separator, Dash              string
+    Icons                        bool
 
     // Palette
-    Name, Duration, Status, TailText, TailErr,
-    Path, FailureStyle, PanicStyle, StackStyle lipgloss.Style
+    Name, Duration, Status, TailText, TailErr, TailCmd, Path,
+    SpinnerStyle, OKStyle, FailureStyle, PanicStyle,
+    InterruptedStyle, StackStyle lipgloss.Style
 }
 ```
+
+(The original sketch had `Branch`/`Elbow` tree connectors; §4.2 settled on
+two-space indentation with no box-drawing — grep-clean blocks — so the
+fields never existed. Everything that varies between Unicode and ASCII
+repertoires is a glyph instead: path separator, ellipsis, replay rule,
+cause dash. Plain mode's origin gutters `$`/`|`/`!` are deliberately *not*
+themed — `grep '^!'` is a §4.6 contract; `GutterOut`/`GutterErr` speak for
+the TUI tail and the replay. Lifecycle glyphs share one display width per
+theme; the glyph column pads over any remaining mix, so ASCII's classic
+one-column `-\|/` spinner sits beside its two-column markers.)
 
 Color capability and glyph repertoire are **orthogonal axes** — a `NO_COLOR`
 purist on a modern terminal renders emoji fine, while a glyph-poor terminal
 (linux console, serial) often still has the 8 basic colors. The embedded
 themes reflect that:
 
-- `ThemeColor` — adaptive default (`lipgloss.AdaptiveColor` per light/dark
-  background), full Unicode glyphs, icons kept.
+- `ThemeColor` — default: full Unicode glyphs, icons kept, basic-ANSI
+  palette. lipgloss v2 dropped `AdaptiveColor`, and reading the background
+  color back needs the stdin answers `WithInput(nil)` can never read (the
+  §3.3 query scar) — but ANSI red/green/yellow already follow the user's
+  light/dark scheme by construction, which is all "adaptive" meant.
 - `ThemeGreyscale` — intensity without hue, full glyphs, icons kept.
 - `ThemeMono` — no color at all; Unicode glyphs and icons kept. Answers
   "I hate colors," not "my terminal is from 1978."
-- `ThemeASCII` — pure ASCII repertoire: `|`/`!` gutters, `+--` connectors,
-  `OK`/`XX`/`!!` markers, `-\|/` spinner, icons dropped. Answers the
-  tofu-box case; natural base for `TERM=dumb`.
+- `ThemeASCII` — pure ASCII repertoire: `|`/`!` gutters,
+  `OK`/`XX`/`!!` markers, `-\|/` spinner, `>` path separator, icons
+  dropped; keeps the color palette. Answers the tofu-box case; natural
+  base for `TERM=dumb`.
 
 Selected via `WithTheme` or `MAGETUI_THEME` (`color|greyscale|mono|ascii`).
 

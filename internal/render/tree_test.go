@@ -29,7 +29,7 @@ func assertFrame(t *testing.T, got, want string) {
 // build's block commits, test's block commits, the root line ends the
 // run — the whole commit choreography in one timeline.
 func TestTree_MidRunFrameThenRootChildCommits(t *testing.T) {
-	tr := NewTree()
+	tr := NewTree(unstyled(ThemeColor))
 	tr.Handle(events.StepStarted{ID: 1, Parent: 0, Name: "all"}, at(0))
 	tr.Handle(events.StepStarted{ID: 2, Parent: 1, Name: "build"}, at(500*time.Millisecond))
 	tr.Handle(events.StepStarted{ID: 3, Parent: 2, Name: "codegen"}, at(500*time.Millisecond))
@@ -118,7 +118,7 @@ func TestTree_MidRunFrameThenRootChildCommits(t *testing.T) {
 // status text; status rides after the elapsed, is replaced by the next
 // StatusChanged, and drops at finish.
 func TestTree_RootLineAndStatusLifecycle(t *testing.T) {
-	tr := NewTree()
+	tr := NewTree(unstyled(ThemeColor))
 	tr.Handle(events.StepStarted{ID: 1, Parent: 0, Name: "deploy"}, at(0))
 
 	// Pre-first-child: something must spin.
@@ -159,7 +159,7 @@ func TestTree_RootLineAndStatusLifecycle(t *testing.T) {
 // decoration between glyph and name, never an alignment anchor beyond
 // their own runes.
 func TestTree_IconsRideTheStep(t *testing.T) {
-	tr := NewTree()
+	tr := NewTree(unstyled(ThemeColor))
 	tr.Handle(events.StepStarted{ID: 1, Parent: 0, Name: "all"}, at(0))
 	tr.Handle(events.StepStarted{ID: 2, Parent: 1, Name: "build", Icon: "🔨"}, at(0))
 	assertFrame(t, tr.Frame(80, 24, at(1*time.Second)), "⠋ 🔨 build  1.0s")
@@ -173,7 +173,7 @@ func TestTree_IconsRideTheStep(t *testing.T) {
 // The ladder: tiers 5 → 3 → 1 → 0, first fit wins; tails always show the
 // most recent lines.
 func TestTree_DegradationLadderTiers(t *testing.T) {
-	tr := NewTree()
+	tr := NewTree(unstyled(ThemeColor))
 	tr.Handle(events.StepStarted{ID: 1, Parent: 0, Name: "all"}, at(0))
 	tr.Handle(events.StepStarted{ID: 2, Parent: 1, Name: "chatty"}, at(100*time.Millisecond))
 	tr.Handle(events.StepStarted{ID: 3, Parent: 1, Name: "noisy"}, at(200*time.Millisecond))
@@ -212,7 +212,7 @@ func TestTree_DegradationLadderTiers(t *testing.T) {
 // Row cuts at tier 0: completed-waiting go first (youngest first), then
 // running shortest-first — the longest-running survive to the last row.
 func TestTree_CutOrderKeepsTheLongestRunning(t *testing.T) {
-	tr := NewTree()
+	tr := NewTree(unstyled(ThemeColor))
 	tr.Handle(events.StepStarted{ID: 1, Parent: 0, Name: "all"}, at(0))
 	tr.Handle(events.StepStarted{ID: 2, Parent: 1, Name: "alpha"}, at(100*time.Millisecond))
 	tr.Handle(events.StepStarted{ID: 3, Parent: 1, Name: "beta"}, at(200*time.Millisecond))
@@ -232,7 +232,7 @@ func TestTree_CutOrderKeepsTheLongestRunning(t *testing.T) {
 // Live lines hard-truncate to width by rune count with a trailing
 // ellipsis — multibyte text must not split.
 func TestTree_TruncationIsRuneCorrect(t *testing.T) {
-	tr := NewTree()
+	tr := NewTree(unstyled(ThemeColor))
 	tr.Handle(events.StepStarted{ID: 1, Parent: 0, Name: "all"}, at(0))
 	tr.Handle(events.StepStarted{ID: 2, Parent: 1, Name: "naïve"}, at(100*time.Millisecond))
 	tr.Handle(events.OutputLine{ID: 2, Origin: events.Stdout, Text: "ünïcödé everywhere all at once"}, at(200*time.Millisecond))
@@ -247,7 +247,7 @@ func TestTree_TruncationIsRuneCorrect(t *testing.T) {
 // sits below a root child: a finished root child would commit straight
 // to scrollback, but a deeper step waits in the live region — visibly.
 func TestTree_InterruptedStepsSayWhy(t *testing.T) {
-	tr := NewTree()
+	tr := NewTree(unstyled(ThemeColor))
 	tr.Handle(events.StepStarted{ID: 1, Parent: 0, Name: "all"}, at(0))
 	tr.Handle(events.StepStarted{ID: 2, Parent: 1, Name: "group"}, at(0))
 	tr.Handle(events.StepStarted{ID: 3, Parent: 2, Name: "soak"}, at(0))
@@ -264,7 +264,7 @@ func TestTree_InterruptedStepsSayWhy(t *testing.T) {
 // Zero-size frames render empty, not garbage; so does the time before
 // the root exists. Height 1 leaves no room under the reserved row.
 func TestTree_ZeroSizeFramesRenderEmpty(t *testing.T) {
-	tr := NewTree()
+	tr := NewTree(unstyled(ThemeColor))
 	assertFrame(t, tr.Frame(80, 24, at(0)), "")
 
 	tr.Handle(events.StepStarted{ID: 1, Parent: 0, Name: "all"}, at(0))
@@ -276,7 +276,7 @@ func TestTree_ZeroSizeFramesRenderEmpty(t *testing.T) {
 // Resize is just another frame: shrink tightens the ladder, growth
 // relaxes it, and nothing is lost in between — only unwindowed.
 func TestTree_ResizeRoundTripsLosslessly(t *testing.T) {
-	tr := NewTree()
+	tr := NewTree(unstyled(ThemeColor))
 	tr.Handle(events.StepStarted{ID: 1, Parent: 0, Name: "all"}, at(0))
 	tr.Handle(events.StepStarted{ID: 2, Parent: 1, Name: "chatty"}, at(100*time.Millisecond))
 	for i := 1; i <= 5; i++ {
@@ -296,7 +296,7 @@ func TestTree_ResizeRoundTripsLosslessly(t *testing.T) {
 // The two promises repaint arithmetic rests on: rows ≤ height and
 // runewidth ≤ width, at every size, for a busy tree.
 func TestTree_InvariantSweep(t *testing.T) {
-	tr := NewTree()
+	tr := NewTree(unstyled(ThemeColor))
 	tr.Handle(events.StepStarted{ID: 1, Parent: 0, Name: "all"}, at(0))
 	tr.Handle(events.StepStarted{ID: 2, Parent: 1, Name: "build", Icon: "🔨"}, at(100*time.Millisecond))
 	tr.Handle(events.StepStarted{ID: 3, Parent: 2, Name: "codegen"}, at(150*time.Millisecond))

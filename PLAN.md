@@ -49,9 +49,9 @@ mergeable. Design: DESIGN.md.
 
 ## Phase 5 — themes + panic presentation
 
-- [ ] Theme struct (glyphs as strings + lipgloss palette)
-- [ ] Embedded: color, greyscale, mono, ascii; MAGETUI_THEME
-- [ ] Panic styling: glyph/style, magefile-frame stack trimming
+- [x] Theme struct (glyphs as strings + lipgloss palette)
+- [x] Embedded: color, greyscale, mono, ascii; MAGETUI_THEME
+- [x] Panic styling: glyph/style, magefile-frame stack trimming
 
 ## Phase 6 — OSC 9;4, signals, edge cases
 

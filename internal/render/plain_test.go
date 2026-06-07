@@ -15,7 +15,7 @@ import (
 // renderer-test contract).
 func feed(evs ...events.Event) (*Plain, *strings.Builder) {
 	var out strings.Builder
-	p := NewPlain(&out)
+	p := NewPlain(&out, unstyled(ThemeColor))
 	for _, ev := range evs {
 		p.Handle(ev)
 	}
@@ -95,7 +95,7 @@ func (s *syncBuffer) String() string {
 
 func TestPlain_HeldStartFlushesOnItsOwnWhenTheBuildGoesQuiet(t *testing.T) {
 	var out syncBuffer
-	p := NewPlain(&out)
+	p := NewPlain(&out, unstyled(ThemeColor))
 	p.Handle(events.StepStarted{ID: 1, Parent: 0, Name: "meditate"})
 
 	deadline := time.Now().Add(2 * time.Second)
