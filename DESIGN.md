@@ -186,13 +186,37 @@ Three consumers behind one interface:
   (`render.Tree`) owns the step-tree snapshot: events in, `Frame(width,
   height, now) string` and `TakeBlocks() []string` out — no bubbletea import,
   no goroutines, no clock (`now` is a parameter so goldens replay scripted
-  timelines). The **adapter** is a thin `tea.Model` around it (inline mode,
-  `WithInput(nil)`): `Update` feeds events (forwarded via `Program.Send`,
-  which is documented to block until the program runs and no-op after exit —
-  no forwarding goroutine needed) plus a ~100ms tick; drained blocks become
-  `tea.Println` commands; `View` returns the frame. The adapter is not
-  unit-tested — the spike proved its primitives, the Phase 7 VHS rig smoke
-  tests it.
+  timelines). The **adapter** wraps it for bubbletea (inline mode,
+  `WithInput(nil)`): `Handle` folds events into the tree under a small mutex
+  and delivers freshly closed blocks through `Program.Println`, then nudges a
+  repaint via `Program.Send` (documented to block until the program runs and
+  no-op after exit — no forwarding goroutine needed); a thin `tea.Model`
+  handles the ~100ms tick, resize, and `View` returning the frame. Blocks
+  deliberately do *not* ride `tea.Println` commands out of `Update`, which
+  was the original plan: v2 runs every command in its own goroutine, so
+  commands from different Updates are unordered — commits would shuffle, and
+  the root line (always committed last) reliably lost its race against
+  `Quit`. `Program.Println` enqueues into the program's FIFO synchronously
+  from the caller, and the engine already serializes `Handle`: commit order
+  and every-block-before-`Quit` follow. Three v2.0.7 scars the adapter
+  absorbs: `Program.Println`, unlike `Send`, has no after-exit guard (a dead
+  program would block the engine forever — the delivery wait is paired with
+  a program-finished signal); the program writes to its output from two
+  goroutines under different locks (kernel-serialized on an `*os.File`, a
+  genuine data race on any other writer); and it interrogates the terminal
+  even though input is disabled — the kitty-keyboard query on the first
+  render plus DECRQM 2026/2027 at startup. Nobody can read those answers
+  under `WithInput(nil)`: they land in the cooked-mode stdin buffer, the
+  line discipline echoes them mid-frame as `^[[?1u`-style garbage, and the
+  next stdin reader inherits them as phantom keystrokes. The cure for the
+  last two is one wrapper at the output seam: every writer gets a
+  serializing query-stripper (the stripped features needed the unreadable
+  answers anyway — nothing is lost), and a terminal file keeps its
+  `Read`/`Close`/`Fd()` surface through it, since bubbletea finds the TTY
+  by type-asserting the output. The keyboard *set* sequences stay: they
+  elicit no responses and are reset at close. The `tea.Model` itself is
+  not unit-tested — the spike proved its primitives, the Phase 7 VHS rig
+  smoke tests it; the query stripper, a pure writer, has its own tests.
 - **Plain** — stateless line-per-event printer with step prefixes.
 - **OSC 9;4** — tiny stateful emitter (percent, error state, clear-on-exit).
 
@@ -310,6 +334,20 @@ styling — Phase 5 inherits geometry that never counts ANSI.
 preserved), each line tagged with origin. Theme renders them distinguishably:
 normal gutter `│` for stdout, error-styled `┃` for stderr (ASCII: `|` vs `!`).
 The tagging carries into plain mode and the failure replay.
+
+Lines render the moment the child writes them — the tail window scrolls
+line-by-line (verified frame-by-frame in a PTY capture). A child that
+*withholds* its output looks buffered, and no renderer can fix that: the
+bytes don't arrive. `go test ./...` is the canonical offender — it buffers
+per-package output and prints results in sorted package order, so a fast
+package's `ok` line waits for every slower package sorted before it
+(measured: first byte at 5.8s of an 8.2s run, through a bare pipe with no
+magetui involved). buildx panes show the same burst for such tools. The
+related classic — libc children switching from line- to full-buffering on
+a pipe — has a known cure, running children on a PTY, rejected here: it
+conflicts with stdin passthrough and is anything but boring. Livelier
+`go test` panes are the magefile's choice: `-v` streams the in-order
+package live, or one step per package.
 
 ### 4.4 Failures and replay
 

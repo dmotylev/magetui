@@ -2,6 +2,7 @@ package magetui
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"runtime"
@@ -9,6 +10,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/dmotylev/magetui/internal/engine"
+	"github.com/dmotylev/magetui/internal/events"
 	"github.com/dmotylev/magetui/internal/render"
 )
 
@@ -62,20 +64,45 @@ func Target(ctx context.Context, fn func(context.Context) error, opts ...TargetO
 	root := eng.NewRoot(callerName(), "")
 	err := eng.RunRoot(ctx, root, fn)
 
+	// Shutdown ordering (DESIGN.md §3.3): close the renderer first — the
+	// TUI commits its final blocks and restores the terminal — then write
+	// the replay as plain prose below the vanished live region. A broken
+	// renderer never eats the build's diagnosis.
+	if cerr := r.Close(); cerr != nil {
+		fmt.Fprintf(os.Stderr, "magetui: renderer: %v\n", cerr)
+	}
 	failed := eng.Failed()
 	replays := make([]render.Replay, 0, len(failed))
 	for _, s := range failed {
 		head, elided, tail := s.Lines()
-		replays = append(replays, render.Replay{ID: s.ID(), Head: head, Elided: elided, Tail: tail})
+		replays = append(replays, render.Replay{
+			Path:     s.Path(),
+			Outcome:  s.Outcome(),
+			Err:      s.Err(),
+			Stack:    s.Stack(),
+			Duration: s.Duration(),
+			Head:     head,
+			Elided:   elided,
+			Tail:     tail,
+		})
 	}
-	r.ReplayFailures(replays)
+	render.ReplayFailures(o.out, eng.StepCount(), replays)
 	return err
 }
 
-// newRenderer picks the renderer for the resolved mode. One renderer
-// exists in Phase 3, so ProgressTTY falls back to plain; the Phase 4 TUI
-// adds its case here.
-func newRenderer(_ ProgressMode, w io.Writer) *render.Plain {
+// renderer is what Target needs from a progress front-end: events in,
+// orderly teardown out. The failure replay is deliberately not here — it
+// is one shared function fed engine facts (DESIGN.md §3.3).
+type renderer interface {
+	Handle(events.Event)
+	Close() error
+}
+
+// newRenderer picks the renderer for the resolved mode.
+func newRenderer(mode ProgressMode, w io.Writer) renderer {
+	if mode == ProgressTTY {
+		return render.NewTUI(w)
+	}
 	return render.NewPlain(w)
 }
 

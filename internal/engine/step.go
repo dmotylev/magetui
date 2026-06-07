@@ -2,12 +2,16 @@ package engine
 
 import (
 	"context"
+	"slices"
+	"time"
 
 	"github.com/dmotylev/magetui/internal/events"
 )
 
 // Step is the engine-side state of one node in the run tree. Renderers
-// never see it; they see only the events it emits.
+// never see it; they see only the events it emits. The terminal facts —
+// outcome, error, stack, duration — are recorded at finish for Target to
+// read back when it assembles the failure replay.
 type Step struct {
 	e      *Engine
 	id     events.StepID
@@ -15,10 +19,36 @@ type Step struct {
 	name   string
 	icon   string
 	buf    *buffer
+
+	// Written once by finishStep under the engine mutex.
+	outcome  events.Outcome
+	err      error
+	stack    []byte
+	duration time.Duration
 }
 
 func (s *Step) ID() events.StepID { return s.id }
 func (s *Step) Name() string      { return s.name }
+
+// Outcome, Err, Stack, and Duration report the step's terminal state.
+// Meaningful only after the step finished; Target reads them post-run.
+func (s *Step) Outcome() events.Outcome { s.e.mu.Lock(); defer s.e.mu.Unlock(); return s.outcome }
+func (s *Step) Err() error              { s.e.mu.Lock(); defer s.e.mu.Unlock(); return s.err }
+func (s *Step) Stack() []byte           { s.e.mu.Lock(); defer s.e.mu.Unlock(); return s.stack }
+func (s *Step) Duration() time.Duration { s.e.mu.Lock(); defer s.e.mu.Unlock(); return s.duration }
+
+// Path returns the step's root-anchored name chain — the failure
+// replay's header (DESIGN.md §4.4).
+func (s *Step) Path() []string {
+	s.e.mu.Lock()
+	defer s.e.mu.Unlock()
+	var names []string
+	for cur := s; cur != nil; cur = s.e.byID[cur.parent] {
+		names = append(names, cur.name)
+	}
+	slices.Reverse(names)
+	return names
+}
 
 // Engine returns the engine that owns the step. The public API uses it to
 // reach RunDeps/RunStep from a context-carried step.
