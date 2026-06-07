@@ -27,6 +27,13 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
+	// The dogfooded magefile runs this very suite, possibly under
+	// MAGETUI_THEME/MAGETUI_PROGRESS overrides — and env outranks code by
+	// design, so a leaked MAGETUI_THEME=greyscale would beat every
+	// WithTheme below. The assertions here speak the default theme in
+	// plain mode; pin that.
+	_ = os.Unsetenv("MAGETUI_THEME")
+	_ = os.Unsetenv("MAGETUI_PROGRESS")
 	os.Exit(m.Run())
 }
 

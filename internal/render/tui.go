@@ -3,10 +3,13 @@ package render
 import (
 	"bytes"
 	"io"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
 
 	"github.com/dmotylev/magetui/internal/events"
 )
@@ -28,9 +31,10 @@ const tickInterval = 100 * time.Millisecond
 // synchronously from the caller, and the engine already serializes
 // Handle, so commit order and println-before-Quit come for free.
 type TUI struct {
-	prog *tea.Program
-	done chan error    // Run's verdict, consumed by Close
-	gone chan struct{} // closed when Run returns; guards println
+	prog    *tea.Program
+	profile colorprofile.Profile // downsamples scrollback blocks
+	done    chan error           // Run's verdict, consumed by Close
+	gone    chan struct{}        // closed when Run returns; guards println
 
 	// mu guards tree between Handle (engine goroutines) and View (the
 	// program's event loop). Never held across prog calls: the event
@@ -43,11 +47,16 @@ type TUI struct {
 // NewTUI boots the bubbletea program writing to w and returns without
 // waiting for it. Program.Send blocks until the program actually runs
 // and no-ops after it exits, so Handle needs no further synchronization.
-func NewTUI(w io.Writer) *TUI {
+// The theme's colors ride the live-region frames as-is — bubbletea
+// detects the terminal's profile itself and downsamples what it
+// repaints — but scrollback blocks need our own copy of that detection:
+// see println.
+func NewTUI(w io.Writer, theme Theme) *TUI {
 	t := &TUI{
-		done: make(chan error, 1),
-		gone: make(chan struct{}),
-		tree: NewTree(),
+		profile: colorprofile.Detect(w, os.Environ()),
+		done:    make(chan error, 1),
+		gone:    make(chan struct{}),
+		tree:    NewTree(theme),
 	}
 	t.prog = tea.NewProgram(tuiModel{t: t}, tea.WithOutput(tuiWriter(w)), tea.WithInput(nil))
 	go func() {
@@ -81,11 +90,22 @@ func (t *TUI) Close() error {
 	return <-t.done
 }
 
-// println delivers one scrollback block. Program.Println, unlike Send,
-// has no after-exit guard and would block the engine forever on a dead
-// program; pairing the wait with the gone signal keeps a broken TUI from
-// eating the build (at worst one parked goroutine per late block).
+// println delivers one scrollback block. Two scars live here. First,
+// bubbletea downsamples only what its cell renderer repaints; Println
+// content reaches the terminal raw (ultraviolet's InsertAbove writes the
+// lines verbatim, v2.0.7), so NO_COLOR and low-color terminals would get
+// the blocks in full color while the live region above them obeys — the
+// block is downsampled here with the same detection bubbletea runs.
+// Second, Program.Println, unlike Send, has no after-exit guard and
+// would block the engine forever on a dead program; pairing the wait
+// with the gone signal keeps a broken TUI from eating the build (at
+// worst one parked goroutine per late block).
 func (t *TUI) println(block string) {
+	if t.profile != colorprofile.TrueColor {
+		var sb strings.Builder
+		_, _ = (&colorprofile.Writer{Forward: &sb, Profile: t.profile}).WriteString(block)
+		block = sb.String()
+	}
 	delivered := make(chan struct{})
 	go func() {
 		t.prog.Println(block)

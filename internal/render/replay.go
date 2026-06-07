@@ -33,57 +33,52 @@ type Replay struct {
 // hidden. total is the number of steps the run started, excluding the
 // root. With no failures it writes nothing. Write errors are dropped:
 // a broken progress pipe must never fail a build.
-func ReplayFailures(w io.Writer, total int, failed []Replay) {
+func ReplayFailures(w io.Writer, total int, failed []Replay, theme Theme) {
 	if len(failed) == 0 {
 		return
 	}
 	printf := func(format string, a ...any) { _, _ = fmt.Fprintf(w, format, a...) }
-	printf("\n%s\n", separator)
+	printf("\n%s\n", styled(theme.TailText, theme.Separator))
 	count := 0
 	for _, r := range failed {
 		// The root is not counted among its own steps.
 		if len(r.Path) > 1 {
 			count++
 		}
-		printf("%s %s%s\n", glyph(r.Outcome), strings.Join(r.Path, pathSep), finishSuffix(r.Outcome, r.Err, r.Duration))
+		printf("%s %s%s\n",
+			styled(theme.glyphStyle(r.Outcome), theme.glyph(r.Outcome)),
+			styled(theme.Path, strings.Join(r.Path, theme.PathSep)),
+			theme.finishSuffix(r.Outcome, r.Err, r.Duration))
 		for _, ln := range r.Head {
-			printf("  %s %s\n", gutter(ln.Origin), ln.Text)
+			printf("  %s\n", styled(theme.gutterStyle(ln.Origin), theme.gutter(ln.Origin)+" "+ln.Text))
 		}
 		if r.Elided > 0 {
-			printf("  … %s lines elided …\n", comma(r.Elided))
+			printf("  %s\n", styled(theme.TailText, fmt.Sprintf("%s %s lines elided %s", theme.Ellipsis, comma(r.Elided), theme.Ellipsis)))
 		}
 		for _, ln := range r.Tail {
-			printf("  %s %s\n", gutter(ln.Origin), ln.Text)
+			printf("  %s\n", styled(theme.gutterStyle(ln.Origin), theme.gutter(ln.Origin)+" "+ln.Text))
 		}
-		// Panics get their stack as a separate block; Phase 5 styles it and
-		// trims it to the magefile frame.
+		// Panics get the stack as a separate styled block (DESIGN.md §4.5):
+		// first the frames trimmed to the developer's own code behind the
+		// stack gutter, then the full capture, dimmed, for when the trim
+		// guessed wrong.
 		if r.Outcome == events.OutcomePanicked && len(r.Stack) > 0 {
+			if trimmed := trimStack(r.Stack); len(trimmed) > 0 {
+				printf("\n")
+				for _, line := range trimmed {
+					printf("  %s %s\n", styled(theme.PanicStyle, theme.StackGutter), line)
+				}
+			}
 			printf("\n")
 			for line := range strings.SplitSeq(strings.TrimRight(string(r.Stack), "\n"), "\n") {
-				printf("  %s\n", line)
+				printf("  %s\n", styled(theme.StackStyle, line))
 			}
 		}
 		printf("\n")
 	}
 	if count > 0 {
-		printf("%d of %d steps failed.\n", count, total)
+		printf("%s\n", styled(theme.FailureStyle, fmt.Sprintf("%d of %d steps failed.", count, total)))
 	}
-}
-
-// finishSuffix renders the duration and, for bad outcomes, the cause:
-// "  9.8s  exit status 2".
-func finishSuffix(o events.Outcome, err error, d time.Duration) string {
-	suffix := fmt.Sprintf("  %.1fs", d.Seconds())
-	switch o {
-	case events.OutcomeFailed, events.OutcomePanicked:
-		if err != nil {
-			suffix += "  " + err.Error()
-		}
-	case events.OutcomeInterrupted:
-		suffix += "  interrupted"
-	case events.OutcomeOK:
-	}
-	return suffix
 }
 
 // comma renders n with thousands separators: the elision marker says

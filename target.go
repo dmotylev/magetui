@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime"
 
+	"github.com/charmbracelet/colorprofile"
 	"golang.org/x/term"
 
 	"github.com/dmotylev/magetui/internal/engine"
@@ -30,8 +31,9 @@ const (
 type TargetOption func(*targetOptions)
 
 type targetOptions struct {
-	out  io.Writer
-	mode ProgressMode
+	out   io.Writer
+	mode  ProgressMode
+	theme Theme
 }
 
 // WithOutput redirects rendering away from os.Stdout. Auto mode treats a
@@ -54,11 +56,17 @@ func WithProgressMode(m ProgressMode) TargetOption {
 // mg.Fatal and subprocess exit statuses) behaves exactly as without
 // magetui. Targets that don't wrap stay plain mage targets.
 func Target(ctx context.Context, fn func(context.Context) error, opts ...TargetOption) error {
-	o := targetOptions{out: os.Stdout}
+	o := targetOptions{out: os.Stdout, theme: ThemeColor}
 	for _, opt := range opts {
 		opt(&o)
 	}
-	r := newRenderer(resolveMode(o), o.out)
+	theme := render.Theme(resolveTheme(o))
+	// The profile writer downsamples the palette to what the output can
+	// show and strips it entirely for pipes, CI, and NO_COLOR. Plain and
+	// the replay write through it; the TUI gets the raw writer because
+	// bubbletea detects the terminal's profile itself.
+	pw := colorprofile.NewWriter(o.out, os.Environ())
+	r := newRenderer(resolveMode(o), o.out, pw, theme)
 
 	eng := engine.New(r.Handle)
 	root := eng.NewRoot(callerName(), "")
@@ -86,7 +94,7 @@ func Target(ctx context.Context, fn func(context.Context) error, opts ...TargetO
 			Tail:     tail,
 		})
 	}
-	render.ReplayFailures(o.out, eng.StepCount(), replays)
+	render.ReplayFailures(pw, eng.StepCount(), replays, theme)
 	return err
 }
 
@@ -98,12 +106,13 @@ type renderer interface {
 	Close() error
 }
 
-// newRenderer picks the renderer for the resolved mode.
-func newRenderer(mode ProgressMode, w io.Writer) renderer {
+// newRenderer picks the renderer for the resolved mode: the TUI on the
+// raw writer, plain behind the colorprofile writer pw.
+func newRenderer(mode ProgressMode, w, pw io.Writer, theme render.Theme) renderer {
 	if mode == ProgressTTY {
-		return render.NewTUI(w)
+		return render.NewTUI(w, theme)
 	}
-	return render.NewPlain(w)
+	return render.NewPlain(pw, theme)
 }
 
 // resolveMode applies the precedence: MAGETUI_PROGRESS over code over
@@ -125,6 +134,23 @@ func resolveMode(o targetOptions) ProgressMode {
 		return ProgressTTY
 	}
 	return ProgressPlain
+}
+
+// resolveTheme applies the same precedence as resolveMode: MAGETUI_THEME
+// over code over the ThemeColor default. Unrecognized values are
+// ignored.
+func resolveTheme(o targetOptions) Theme {
+	switch os.Getenv("MAGETUI_THEME") {
+	case "color":
+		return ThemeColor
+	case "greyscale":
+		return ThemeGreyscale
+	case "mono":
+		return ThemeMono
+	case "ascii":
+		return ThemeASCII
+	}
+	return o.theme
 }
 
 // callerName names the root step after the magefile target that called

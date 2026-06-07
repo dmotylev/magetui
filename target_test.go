@@ -15,8 +15,9 @@ import (
 // Helpers named like magefile targets, so callerName has something honest
 // to derive the root step from.
 
-func deployCarrierPigeons(out io.Writer, fn func(context.Context) error) error {
-	return magetui.Target(context.Background(), fn, magetui.WithOutput(out))
+func deployCarrierPigeons(out io.Writer, fn func(context.Context) error, opts ...magetui.TargetOption) error {
+	opts = append(opts, magetui.WithOutput(out))
+	return magetui.Target(context.Background(), fn, opts...)
 }
 
 func nightlyBuild(out io.Writer, fn func(context.Context) error) error {
@@ -80,9 +81,9 @@ func TestTarget_ReplaysTheOutputOfFailedStepsOnly(t *testing.T) {
 	}
 	replay := got[strings.Index(got, "──────"):]
 	for _, want := range []string{
-		"nightlyBuild ▸ ", // replay paths include the root
-		"| fetching coffee",
-		"! computer says no",
+		"nightlyBuild ▸ ",    // replay paths include the root
+		"│ fetching coffee",  // the replay speaks the theme's gutters,
+		"┃ computer says no", // not plain's grid (DESIGN.md §4.4 vs §4.6)
 		"exit status 3",
 		"1 of 2 steps failed.", // the dep, not its root casualty
 	} {
@@ -92,6 +93,47 @@ func TestTarget_ReplaysTheOutputOfFailedStepsOnly(t *testing.T) {
 	}
 	if strings.Contains(replay, "minding my own business") {
 		t.Errorf("replay leaked a green step's output:\n%s", replay)
+	}
+}
+
+func TestTarget_WithThemeSelectsTheGlyphRepertoire(t *testing.T) {
+	var out bytes.Buffer
+	err := deployCarrierPigeons(&out, func(context.Context) error { return nil },
+		magetui.WithTheme(magetui.ThemeASCII))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "OK deployCarrierPigeons") {
+		t.Errorf("ASCII theme not applied:\n%s", out.String())
+	}
+}
+
+func TestTarget_EnvThemeOutranksTheCode(t *testing.T) {
+	t.Setenv("MAGETUI_THEME", "ascii")
+	var out bytes.Buffer
+	err := deployCarrierPigeons(&out, func(context.Context) error { return nil },
+		magetui.WithTheme(magetui.ThemeMono))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "OK deployCarrierPigeons") {
+		t.Errorf("MAGETUI_THEME=ascii must outrank WithTheme:\n%s", out.String())
+	}
+}
+
+// A non-terminal writer gets no ANSI at all: the colorprofile writer
+// strips the default theme's palette for pipes and CI.
+func TestTarget_PipedOutputCarriesNoANSI(t *testing.T) {
+	var out bytes.Buffer
+	err := deployCarrierPigeons(&out, func(ctx context.Context) error {
+		magetui.Status(ctx, "scheming")
+		return errors.New("foiled")
+	})
+	if err == nil {
+		t.Fatal("the scheme succeeded unexpectedly")
+	}
+	if strings.Contains(out.String(), "\x1b[") {
+		t.Errorf("escape sequences leaked into piped output:\n%q", out.String())
 	}
 }
 
