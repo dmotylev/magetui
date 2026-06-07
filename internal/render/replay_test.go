@@ -11,7 +11,7 @@ import (
 
 func TestReplayFailures_FullPathAndElision(t *testing.T) {
 	var out strings.Builder
-	ReplayFailures(&out, 2, []Replay{{
+	ReplayFailures(&out, 2, 0, []Replay{{
 		Path:     []string{"all", "overthink"},
 		Outcome:  events.OutcomeFailed,
 		Err:      errors.New("exit status 2"),
@@ -45,7 +45,7 @@ func TestReplayFailures_FullPathAndElision(t *testing.T) {
 
 func TestReplayFailures_PanicsGetTheStackAsItsOwnBlock(t *testing.T) {
 	var out strings.Builder
-	ReplayFailures(&out, 1, []Replay{{
+	ReplayFailures(&out, 1, 0, []Replay{{
 		Path:    []string{"all", "dropTable"},
 		Outcome: events.OutcomePanicked,
 		Err:     errors.New("panic: the intern had prod access"),
@@ -77,7 +77,7 @@ func TestReplayFailures_PanicsGetTheStackAsItsOwnBlock(t *testing.T) {
 
 func TestReplayFailures_UnrecognizableStackSkipsTheTrimmedBlock(t *testing.T) {
 	var out strings.Builder
-	ReplayFailures(&out, 1, []Replay{{
+	ReplayFailures(&out, 1, 0, []Replay{{
 		Path:     []string{"all", "weird"},
 		Outcome:  events.OutcomePanicked,
 		Err:      errors.New("panic: chaos"),
@@ -96,7 +96,7 @@ func TestReplayFailures_UnrecognizableStackSkipsTheTrimmedBlock(t *testing.T) {
 
 func TestReplayFailures_RootOnlyFailureSkipsTheCountLine(t *testing.T) {
 	var out strings.Builder
-	ReplayFailures(&out, 0, []Replay{{
+	ReplayFailures(&out, 0, 0, []Replay{{
 		Path:     []string{"all"},
 		Outcome:  events.OutcomeFailed,
 		Err:      errors.New("forgot to plug it in"),
@@ -115,7 +115,7 @@ func TestReplayFailures_RootOnlyFailureSkipsTheCountLine(t *testing.T) {
 
 func TestReplayFailures_NoFailuresMeansSilence(t *testing.T) {
 	var out strings.Builder
-	ReplayFailures(&out, 5, nil, unstyled(ThemeColor))
+	ReplayFailures(&out, 5, 0, nil, unstyled(ThemeColor))
 	if out.String() != "" {
 		t.Fatalf("a green build earned silence, got:\n%s", out.String())
 	}
@@ -126,5 +126,31 @@ func TestComma_SeparatesThousands(t *testing.T) {
 		if got := comma(n); got != want {
 			t.Errorf("comma(%d) = %q, want %q", n, got, want)
 		}
+	}
+}
+
+func TestReplayFailures_InterruptionAloneStillGetsTheLastWord(t *testing.T) {
+	var out strings.Builder
+	ReplayFailures(&out, 14, 3, nil, unstyled(ThemeColor))
+	want := "\n" + strings.Repeat("─", 42) + "\n" +
+		"interrupted, 3 of 14 steps did not finish.\n"
+	if got := out.String(); got != want {
+		t.Errorf("got:\n%q\nwant:\n%q", got, want)
+	}
+}
+
+func TestReplayFailures_FailureAndInterruptionBothCounted(t *testing.T) {
+	var out strings.Builder
+	ReplayFailures(&out, 14, 5, []Replay{{
+		Path:     []string{"ci", "overthink"},
+		Outcome:  events.OutcomeFailed,
+		Err:      errors.New("exit status 2"),
+		Duration: 9800 * time.Millisecond,
+	}}, unstyled(ThemeColor))
+	got := out.String()
+	failedLine := "1 of 14 steps failed.\n"
+	interruptedLine := "interrupted, 5 of 14 steps did not finish.\n"
+	if !strings.HasSuffix(got, failedLine+interruptedLine) {
+		t.Errorf("count lines missing or misordered:\n%s", got)
 	}
 }

@@ -26,12 +26,13 @@ type Engine struct {
 
 	sink func(events.Event)
 
-	mu     sync.Mutex
-	nextID events.StepID
-	once   map[any]*call
-	steps  []*Step
-	byID   map[events.StepID]*Step
-	failed []*Step
+	mu      sync.Mutex
+	nextID  events.StepID
+	once    map[any]*call
+	steps   []*Step
+	byID    map[events.StepID]*Step
+	failed  []*Step
+	rootCtx context.Context
 }
 
 // call is one once-per-target execution slot, shared by every dependent
@@ -80,9 +81,23 @@ func (e *Engine) NewRoot(name, icon string) *Step {
 
 // RunRoot executes fn as the root step s, with the same terminal-state
 // classification as any other step. Non-root steps are run by
-// RunDeps/RunStep; the root belongs to the Target lifecycle.
+// RunDeps/RunStep; the root belongs to the Target lifecycle. The context
+// is remembered as the run's root context: its cancellation is what makes
+// a context.Canceled error count as an interruption (DESIGN.md §6).
 func (e *Engine) RunRoot(ctx context.Context, s *Step, fn func(context.Context) error) error {
+	e.mu.Lock()
+	e.rootCtx = ctx
+	e.mu.Unlock()
 	return e.run(ctx, s, fn)
+}
+
+// rootCanceled reports whether the run's root context is canceled — the
+// fact distinguishing "the build was interrupted" from "a step's own
+// cancellation machinery fired".
+func (e *Engine) rootCanceled() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.rootCtx != nil && e.rootCtx.Err() != nil
 }
 
 // Failed returns the steps that failed directly — returned their own error,
@@ -102,6 +117,22 @@ func (e *Engine) StepCount() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return max(0, len(e.steps)-1)
+}
+
+// InterruptedCount returns the number of non-root steps that finished
+// interrupted — the replay's "K of M steps did not finish" line. Their
+// entries are deliberately absent from Failed: the cause was the user,
+// there is nothing to diagnose (DESIGN.md §6).
+func (e *Engine) InterruptedCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	n := 0
+	for _, s := range e.steps {
+		if s.parent != 0 && s.outcome == events.OutcomeInterrupted {
+			n++
+		}
+	}
+	return n
 }
 
 // failure carries an error through panic without being mistaken for a
@@ -203,6 +234,12 @@ func (e *Engine) finishStep(s *Step, started time.Time, err error, pval any, sta
 	switch {
 	case pval != nil:
 		outcome = events.OutcomePanicked
+	case err != nil && errors.Is(err, context.Canceled) && e.rootCanceled():
+		// Interrupted, by error and not by clock (DESIGN.md §6): the step
+		// reported the root context's cancellation. A genuine failure
+		// landing after ^C keeps OutcomeFailed; a context.Canceled from a
+		// step's own machinery while the root is live does too.
+		outcome = events.OutcomeInterrupted
 	case err != nil:
 		outcome = events.OutcomeFailed
 	}
@@ -210,7 +247,9 @@ func (e *Engine) finishStep(s *Step, started time.Time, err error, pval any, sta
 	// The terminal facts stay on the step too: Target reads them back
 	// after the run to assemble the failure replay (DESIGN.md §4.4).
 	s.outcome, s.err, s.stack, s.duration = outcome, err, stack, time.Since(started)
-	if outcome != events.OutcomeOK && direct {
+	// Interrupted steps stay out of failed: the replay diagnoses builds
+	// that broke themselves, not builds the user stopped.
+	if (outcome == events.OutcomeFailed || outcome == events.OutcomePanicked) && direct {
 		e.failed = append(e.failed, s)
 	}
 	e.mu.Unlock()

@@ -7,11 +7,13 @@ import (
 )
 
 // The adapter's tea.Model is deliberately untested (DESIGN.md §3.3); the
-// query stripper is a pure writer and gets the full treatment — it
-// guards the screen of every kitty-capable terminal.
+// sequence stripper is a pure writer and gets the full treatment — it
+// guards the screen of every kitty-capable terminal, and since Phase 6
+// the ^C of every kitty-capable terminal too (a swallowed keyboard
+// enhancement means a swallowed SIGINT).
 
 func TestStripWriter_RemovesEachQueryWherverItSits(t *testing.T) {
-	for _, q := range queries {
+	for _, q := range stripped {
 		var out strings.Builder
 		w := &stripWriter{w: &out}
 		if _, err := w.Write([]byte("before" + string(q) + "after")); err != nil {
@@ -24,7 +26,7 @@ func TestStripWriter_RemovesEachQueryWherverItSits(t *testing.T) {
 }
 
 func TestStripWriter_RemovesQueriesSplitAtEveryBoundary(t *testing.T) {
-	for _, q := range queries {
+	for _, q := range stripped {
 		for cut := 1; cut < len(q); cut++ {
 			var out strings.Builder
 			w := &stripWriter{w: &out}
@@ -40,12 +42,17 @@ func TestStripWriter_RemovesQueriesSplitAtEveryBoundary(t *testing.T) {
 
 func TestStripWriter_LeavesInnocentLookalikesAlone(t *testing.T) {
 	// Cursor hide, bracketed paste, a DECRQM for a mode we don't strip,
-	// and a near-miss final byte — all share prefixes with the queries.
+	// a near-miss final byte, modifyOtherKeys at a level bubbletea never
+	// sets, and kitty flag/mode combinations it never emits — all share
+	// prefixes with the stripped set.
 	for _, s := range []string{
 		"\x1b[?25l",
 		"\x1b[?2004h",
 		"\x1b[?2028$p",
 		"\x1b[?2026$q",
+		"\x1b[>4;1m",
+		"\x1b[=1;3u",
+		"\x1b[=2;1u",
 		"\x1b[?u" + "", // the query itself, as a control
 	} {
 		var out strings.Builder

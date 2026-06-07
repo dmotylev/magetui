@@ -2,6 +2,7 @@ package render
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"strings"
@@ -32,6 +33,7 @@ const tickInterval = 100 * time.Millisecond
 // Handle, so commit order and println-before-Quit come for free.
 type TUI struct {
 	prog    *tea.Program
+	w       io.Writer            // the raw writer, kept for ^C degradation
 	profile colorprofile.Profile // downsamples scrollback blocks
 	done    chan error           // Run's verdict, consumed by Close
 	gone    chan struct{}        // closed when Run returns; guards println
@@ -40,8 +42,9 @@ type TUI struct {
 	// program's event loop). Never held across prog calls: the event
 	// loop may be waiting on mu inside View while a prog call waits on
 	// the event loop.
-	mu   sync.Mutex
-	tree *Tree
+	mu       sync.Mutex
+	tree     *Tree
+	fallback *Plain // plain takeover after the program died mid-run
 }
 
 // NewTUI boots the bubbletea program writing to w and returns without
@@ -53,6 +56,7 @@ type TUI struct {
 // see println.
 func NewTUI(w io.Writer, theme Theme) *TUI {
 	t := &TUI{
+		w:       w,
 		profile: colorprofile.Detect(w, os.Environ()),
 		done:    make(chan error, 1),
 		gone:    make(chan struct{}),
@@ -68,8 +72,19 @@ func NewTUI(w io.Writer, theme Theme) *TUI {
 }
 
 // Handle folds one event into the tree, prints whatever blocks it
-// closed, and nudges the program to repaint.
+// closed, and nudges the program to repaint. Once the program is gone
+// while the engine still runs — ^C, a SIGTERM-quit, any premature
+// program death — events degrade to a plain renderer instead
+// (DESIGN.md §6): the terminal is already restored, the live region is
+// gone, and the stragglers stream as plain lines below it until the
+// engine drains.
 func (t *TUI) Handle(ev events.Event) {
+	select {
+	case <-t.gone:
+		t.degraded().Handle(ev)
+		return
+	default:
+	}
 	t.mu.Lock()
 	t.tree.Handle(ev, time.Now())
 	blocks := t.tree.TakeBlocks()
@@ -80,14 +95,34 @@ func (t *TUI) Handle(ev events.Event) {
 	t.prog.Send(repaintMsg{})
 }
 
+// degraded lazily builds the plain renderer Handle falls back to after
+// the program died mid-run, seeded with every step the tree knows so the
+// stragglers' paths resolve. It writes through the same profile the
+// blocks used: the raw writer needs no query stripping once bubbletea is
+// gone.
+func (t *TUI) degraded() *Plain {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.fallback == nil {
+		t.fallback = NewPlainOver(&colorprofile.Writer{Forward: t.w, Profile: t.profile}, t.tree)
+	}
+	return t.fallback
+}
+
 // Close quits the program and waits for the terminal to be restored.
 // Every block is already in the program's queue ahead of the Quit —
 // Handle delivered them synchronously — so nothing is lost. Target
 // writes the failure replay only after this returns, as plain prose
-// below the vanished live region (DESIGN.md §3.3).
+// below the vanished live region (DESIGN.md §3.3). An ErrInterrupted
+// verdict is not a renderer failure: it is bubbletea reporting the ^C
+// that the degradation path already absorbed.
 func (t *TUI) Close() error {
 	t.prog.Quit()
-	return <-t.done
+	err := <-t.done
+	if errors.Is(err, tea.ErrInterrupted) {
+		return nil
+	}
+	return err
 }
 
 // println delivers one scrollback block. Two scars live here. First,
@@ -148,14 +183,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tickMsg:
 		return m, tick()
-	case tea.InterruptMsg:
-		// bubbletea swallows SIGINT and delivers it here instead. Real
-		// interrupt teardown — cancel the root context, mark steps ⊘ —
-		// is Phase 6; until then ^C drops the live region cleanly and a
-		// second ^C (back at default disposition) kills the process
-		// with the terminal already restored.
-		return m, tea.Quit
 	}
+	// No InterruptMsg case: bubbletea's event loop intercepts it before
+	// any Update and returns ErrInterrupted from Run (v2.0.7 eventLoop) —
+	// the model never sees it. SIGTERM likewise becomes an internal
+	// QuitMsg. Either way the program exits and restores the terminal;
+	// Handle notices the closed gone channel and degrades to plain
+	// (DESIGN.md §6). Mage owns the actual interruption: its mainfile
+	// cancels the target context on the first ^C and force-exits on the
+	// second — which then finds the terminal already cooked.
 	return m, nil
 }
 
@@ -166,24 +202,39 @@ func (m tuiModel) View() tea.View {
 	return tea.NewView(frame)
 }
 
-// queries are the terminal interrogations bubbletea v2.0.7 emits even
-// with input disabled: the kitty keyboard query on the first render, and
-// the DECRQM synchronized-output/unicode-core pair at startup on capable
-// terminals. With WithInput(nil) the answers can never be read — they
-// land in the cooked-mode stdin buffer, where the line discipline echoes
-// them onto the screen as ^[[?1u-style garbage and the next stdin reader
-// inherits them as phantom keystrokes. Stripping the questions costs
-// nothing: the features they would unlock need the very answers that are
-// never read.
-var queries = [][]byte{
+// stripped lists the terminal sequences bubbletea v2.0.7 emits even with
+// input disabled, in two families, that must not reach the terminal.
+//
+// The interrogations — the kitty keyboard query on the first render and
+// the DECRQM synchronized-output/unicode-core pair at startup: with
+// WithInput(nil) the answers can never be read — they land in the
+// cooked-mode stdin buffer, where the line discipline echoes them onto
+// the screen as ^[[?1u-style garbage and the next stdin reader inherits
+// them as phantom keystrokes.
+//
+// The keyboard enhancements — the renderer unconditionally enables
+// modifyOtherKeys(2) and the kitty keyboard protocol with the
+// disambiguate flag at start (cursed_renderer.go). In a terminal that
+// honors either (Ghostty, kitty, WezTerm, xterm), ^C then arrives as an
+// escape sequence on stdin instead of a 0x03 byte — the line discipline
+// never raises SIGINT, and mage's whole interrupt handling (DESIGN.md
+// §6) silently dies while nobody reads the "enhanced" events anyway.
+//
+// Stripping both families costs nothing: every feature they would
+// unlock needs the input that is never read.
+var stripped = [][]byte{
 	[]byte("\x1b[?u"),      // ansi.RequestKittyKeyboard
 	[]byte("\x1b[?2026$p"), // ansi.RequestModeSynchronizedOutput
 	[]byte("\x1b[?2027$p"), // ansi.RequestModeUnicodeCore
+	[]byte("\x1b[>4;2m"),   // ansi.SetModifyOtherKeys2
+	[]byte("\x1b[>4m"),     // ansi.ResetModifyOtherKeys
+	[]byte("\x1b[=1;1u"),   // ansi.KittyKeyboard(1, 1): disambiguate on
+	[]byte("\x1b[=0;1u"),   // ansi.KittyKeyboard(0, 1): the reset
 }
 
-// maxQueryCarry bounds the held-back tail: the longest query is 9 bytes,
+// maxStripCarry bounds the held-back tail: the longest query is 9 bytes,
 // so a partial match is at most 8.
-const maxQueryCarry = 8
+const maxStripCarry = 8
 
 // tuiWriter prepares w for bubbletea: every output gets the query
 // stripper (whose mutex also serializes the program's two writing
@@ -203,7 +254,7 @@ func tuiWriter(w io.Writer) io.Writer {
 }
 
 // stripWriter removes the query sequences from the stream, holding back
-// at most maxQueryCarry trailing bytes when they could be the start of a
+// at most maxStripCarry trailing bytes when they could be the start of a
 // query split across Write calls; the next write resolves them. Held
 // bytes only ever wait for output that bubbletea is already about to
 // send — every query is followed by more startup output in the same
@@ -218,11 +269,11 @@ func (s *stripWriter) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	data := append(s.carry, p...)
-	for _, q := range queries {
+	for _, q := range stripped {
 		data = bytes.ReplaceAll(data, q, nil)
 	}
 	// Write before touching carry: data may share carry's backing array.
-	cut := len(data) - partialQuerySuffix(data)
+	cut := len(data) - partialStripSuffix(data)
 	if _, err := s.w.Write(data[:cut]); err != nil {
 		return 0, err
 	}
@@ -230,12 +281,12 @@ func (s *stripWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// partialQuerySuffix returns the length of the longest data suffix that
+// partialStripSuffix returns the length of the longest data suffix that
 // is a proper prefix of any query — the bytes that cannot be emitted yet.
-func partialQuerySuffix(data []byte) int {
-	for k := min(len(data), maxQueryCarry); k > 0; k-- {
+func partialStripSuffix(data []byte) int {
+	for k := min(len(data), maxStripCarry); k > 0; k-- {
 		tail := data[len(data)-k:]
-		for _, q := range queries {
+		for _, q := range stripped {
 			if k < len(q) && bytes.Equal(tail, q[:k]) {
 				return k
 			}

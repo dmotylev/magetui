@@ -1,6 +1,7 @@
 package render
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync"
@@ -142,5 +143,34 @@ func TestPlain_CloseFlushesHeldStartedLines(t *testing.T) {
 	}
 	if got := out.String(); got != "○ procrastinate  started\n" {
 		t.Fatalf("held line must not outlive Close — the replay prints next:\n%q", got)
+	}
+}
+
+func TestPlainOver_StreamsStragglersAtTheTreesWidth(t *testing.T) {
+	// The TUI's ^C degradation: the tree saw the whole run so far; the
+	// takeover plain renderer prints nothing for it, but resolves the
+	// stragglers' paths and opens the name column at the width the run
+	// had already reached.
+	tree := NewTree(unstyled(ThemeColor))
+	at := time.Unix(0, 0)
+	tree.Handle(events.StepStarted{ID: 1, Parent: 0, Name: "ci"}, at)
+	tree.Handle(events.StepStarted{ID: 2, Parent: 1, Name: "test"}, at)
+	tree.Handle(events.StepStarted{ID: 3, Parent: 1, Name: "procrastinate"}, at)
+
+	var out strings.Builder
+	p := NewPlainOver(&out, tree)
+	if out.Len() != 0 {
+		t.Fatalf("takeover printed on boot: %q", out.String())
+	}
+	p.Handle(events.StepFinished{ID: 3, Outcome: events.OutcomeInterrupted, Err: context.Canceled, Duration: 1500 * time.Millisecond})
+	p.Handle(events.StepFinished{ID: 2, Outcome: events.OutcomeOK, Duration: 2000 * time.Millisecond})
+	p.Handle(events.StepFinished{ID: 1, Outcome: events.OutcomeInterrupted, Err: context.Canceled, Duration: 2100 * time.Millisecond})
+
+	want := `⊘ procrastinate  1.5s  interrupted
+✓ test           2.0s
+⊘ ci             2.1s  interrupted
+`
+	if got := out.String(); got != want {
+		t.Errorf("frames diverge:\n--- got ---\n%s--- want ---\n%s", got, want)
 	}
 }

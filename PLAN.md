@@ -55,11 +55,14 @@ mergeable. Design: DESIGN.md.
 
 ## Phase 6 — OSC 9;4, signals, edge cases
 
-- [ ] OSC emitter: indeterminate → percent, error state, clear-on-exit;
-      env gating; MAGETUI_OSC_PROGRESS
-- [ ] SIGINT/SIGTERM teardown; second-signal immediate exit; build-tagged
-      Windows variants
-- [ ] Nested Target; terminal restore on panic
+- [x] OSC emitter: indeterminate → percent on first finish, sticky error
+      state, clear-on-exit; env gating + stderr-tty; MAGETUI_OSC_PROGRESS
+- [x] SIGINT observed via mage's ctx cancellation; own SIGTERM watcher
+      (build-tagged, second TERM kills); ⊘ classification by error;
+      TUI→plain degradation on ^C; 130/143 exit codes; replay
+      acknowledgment line
+- [x] Nested Target (inner becomes an ordinary step, options ignored);
+      Linger manual rig
 
 ## Phase 7 — examples, demo, release
 
