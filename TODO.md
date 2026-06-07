@@ -27,3 +27,10 @@ do things*, with rationale; this records things nobody has decided on.
   the icon, plus auto-assignment pools (single-hue gradient, rainbow);
   settle stable assignment (name-hash vs registration order), theme
   interplay, profile degradation.
+- Dedup scope divergence from mage — mage's Deps once-map is
+  process-global (magefile/mage#359, #524) while our registry is
+  per-Target, so `mage b c` with both targets wrapped runs a shared
+  dep twice where mage runs it once; document as a §6 known wart or
+  design a process-global registry (mind shared failed-dep semantics).
+- Parallelisation-limit helper — if mg grows one (magefile/mage#38),
+  our Deps mirror must match it.
