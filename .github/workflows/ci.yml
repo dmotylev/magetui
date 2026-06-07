@@ -40,3 +40,29 @@ jobs:
         with:
           go-version: stable
       - run: go tool mage vuln
+
+  vhs:
+    # Real-PTY smoke: golden tests cover the layout core with no
+    # terminal; this is the one place bubbletea boots on a real PTY.
+    # Renders examples/demo.tape and asserts the run ended green.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      # Not vhs-action: its ffmpeg step fetches a third-party static
+      # build and fails. apt, a pinned ttyd release, and go install
+      # are boring.
+      - name: Install vhs
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q ffmpeg
+          sudo curl -fsSL -o /usr/local/bin/ttyd \
+            https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64
+          sudo chmod +x /usr/local/bin/ttyd
+          go install github.com/charmbracelet/vhs@latest
+      # Compile the magefile binary so the recording starts hot.
+      - run: go tool mage -d examples -l
+      - run: vhs examples/demo.tape
+      - run: grep -q '✓ demo' examples/demo.txt && ! grep -qE '✗|‼' examples/demo.txt

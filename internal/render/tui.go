@@ -21,8 +21,8 @@ const tickInterval = 100 * time.Millisecond
 // TUI is the bubbletea adapter around the Tree layout core (DESIGN.md
 // §3.3): inline mode (the v2 default), WithInput(nil) so stdin stays with
 // the user's subprocesses, a ~100ms tick. The adapter has no unit tests —
-// the Phase 4 spike proved its primitives, the Phase 7 VHS rig
-// smoke-tests it; goldens probe Tree directly.
+// the Phase 4 spike proved its primitives, the VHS smoke in CI
+// tests it; goldens probe Tree directly.
 //
 // Scrollback blocks go through Program.Println, not through tea.Println
 // commands returned from Update: bubbletea v2 runs every command in its

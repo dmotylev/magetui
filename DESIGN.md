@@ -2,7 +2,13 @@
 
 A `docker buildx`-style live progress display for [mage](https://magefile.org) builds.
 
-Status: design accepted, pre-implementation.
+Status: **living document** — this always describes the current state,
+including the rejected alternatives that justify it. It changes per
+CONTRIBUTING.md: a PR that changes observable behavior carries its
+DESIGN.md diff; a superseded decision is rewritten to the new state and
+the old approach moves into the rejected-alternatives prose. History is
+git blame; don't relitigate settled trade-offs without new information.
+
 Module: `github.com/dmotylev/magetui` · Go 1.26+ · deps:
 `charm.land/bubbletea/v2`, `charm.land/lipgloss/v2`, `golang.org/x/term`,
 plus `github.com/charmbracelet/colorprofile` (lipgloss's companion
@@ -227,7 +233,7 @@ Three consumers behind one interface:
   Phase 6 when ^C stopped stopping builds in Ghostty. With input disabled
   nobody reads the enhanced events, so stripping them restores classic ^C
   at zero cost. The `tea.Model` itself is not unit-tested — the spike
-  proved its primitives, the Phase 7 VHS rig smoke tests it; the sequence
+  proved its primitives, the VHS smoke in CI tests it; the sequence
   stripper, a pure writer, has its own tests.
 - **Plain** — stateless line-per-event printer with step prefixes.
 - **OSC 9;4** — tiny stateful emitter (pulse by default, opt-in percent, error state, clear-on-exit).
@@ -648,15 +654,21 @@ The event seam pays off:
 - **Manual rig**: a demo magefile with artificially slow, chatty, and failing
   targets (`Brew`, `Overthink`, `DropTable`).
 
-## 8. v1 non-goals
+## 8. Non-goals
 
-Explicitly out, architecture-permitting later:
+Decided out of v0.1, each architecture-permitting later — the design
+deliberately leaves the seam open but the work was not done:
 
 - Keyboard navigation / focus panes (renderer consumes a layout policy; an
-  input layer can mutate it later).
+  input layer can mutate it later — but any input layer competes for the
+  stdin that §2 promises to subprocesses).
 - `magetui.Interactive()` terminal-release escape hatch.
 - `MAGETUI_EVENTS=json` machine-readable event stream.
 - go-tui as rendering backend (revisit at their 1.0).
+
+These doubled as the seed of TODO.md, which tracks candidate futures;
+this section records why they were deferred. Reopening one takes new
+information, not re-argument.
 
 ## 9. Layout
 
@@ -674,3 +686,35 @@ magetui/
 └── examples/
     └── magefile.go    # demo / manual test rig
 ```
+
+## 10. Compatibility promise
+
+What semver covers, from v0.1.0 on. A renderer's output sits awkwardly
+between presentation and API; this section draws the line so neither
+side has to guess.
+
+**Covered — breaking changes require a major version:**
+
+- The Go API of the root package.
+- Environment variables: the names and accepted values of
+  `MAGETUI_PROGRESS`, `MAGETUI_THEME`, `MAGETUI_OSC_PROGRESS`, and the
+  env-overrides-code precedence (§2).
+- Exit codes: errors propagate to mage untouched; 130 on SIGINT, 143 on
+  SIGTERM via the `ExitStatus()` convention (§6).
+- Theme names: `color`, `greyscale`, `mono`, `ascii` keep existing and
+  being selectable.
+- Plain mode's structural contract (§4.6): one line per event; the
+  first column is a lifecycle glyph or an origin gutter; the origin
+  gutters are fixed at `$` (command), `|` (stdout), `!` (stderr) — they
+  are deliberately unthemed (§5) precisely so `grep '^!'` keeps finding
+  stderr in CI logs; the second column is the step path.
+
+**Not covered — may change in any minor:**
+
+- Byte-exact output of any renderer: padding widths, spacing, column
+  alignment behavior, truncation points, tick timing.
+- TUI frames entirely — the live region is presentation, full stop.
+- Theme *content*: glyphs, palette, spinner frames. The lifecycle glyph
+  meanings (started, ok, failed, panicked, interrupted) are stable as a
+  set, but their rendering belongs to the theme.
+- OSC 9;4 emission details beyond the env-var gate.

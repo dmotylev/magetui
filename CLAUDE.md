@@ -9,6 +9,9 @@ DESIGN.md. It records every decision *and* the rejected alternatives —
 read it before proposing architecture changes; don't relitigate settled
 trade-offs without new information.
 
+The change process (design-first rule, plan files, TODO.md pipeline,
+release checklist) is CONTRIBUTING.md — follow it for any change.
+
 ## Hard constraints
 
 - Renderer, not build system: `magetui.Deps` must reproduce the `mg.Deps`
