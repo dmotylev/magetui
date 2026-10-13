@@ -207,8 +207,18 @@ Three consumers behind one interface:
   the root line (always committed last) reliably lost its race against
   `Quit`. `Program.Println` enqueues into the program's FIFO synchronously
   from the caller, and the engine already serializes `Handle`: commit order
-  and every-block-before-`Quit` follow. Three v2.0.7 scars the adapter
-  absorbs: `Program.Println`, unlike `Send`, has no after-exit guard (a dead
+  and every-block-before-`Quit` follow. Startup waits for the first renderer
+  write before accepting engine events. Bubble Tea initially sizes its
+  inline buffer to the whole terminal; the first flush sets the actual
+  frame height. Previously, an immediate completion could reach `Println`
+  first and overwrite existing terminal content. The output wrapper signals
+  startup after its first nonempty filtered write, including a failed write;
+  stripped startup queries do not release the wait. Program exit also
+  releases it, so startup errors use the existing plain fallback. This uses
+  renderer progress, not a fixed sleep or terminal input.
+
+  Three other v2.0.7 scars the adapter absorbs: `Program.Println`, unlike
+  `Send`, has no after-exit guard (a dead
   program would block the engine forever — the delivery wait is paired with
   a program-finished signal); the program writes to its output from two
   goroutines under different locks (kernel-serialized on an `*os.File`, a
@@ -653,6 +663,9 @@ The event seam pays off:
   repaint arithmetic rests on.
 - **Manual rig**: a demo magefile with artificially slow, chatty, and failing
   targets (`Brew`, `Overthink`, `DropTable`).
+- **Terminal smoke**: VHS runs the demo and immediate success/failure targets.
+  The fast-exit check inspects the final screen for pre-existing markers and
+  completed outcomes. Earlier recording frames cannot satisfy the check.
 
 ## 8. Non-goals
 

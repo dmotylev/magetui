@@ -66,3 +66,7 @@ jobs:
       - run: go tool mage -d examples -l
       - run: vhs examples/demo.tape
       - run: grep -q '✓ demo' examples/demo.txt && ! grep -qE '✗|‼' examples/demo.txt
+      - run: vhs examples/fast-exit.tape
+      - name: Check fast exits preserve terminal content
+        run: |
+          python3 examples/check-fast-exit.py

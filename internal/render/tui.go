@@ -47,9 +47,9 @@ type TUI struct {
 	fallback *Plain // plain takeover after the program died mid-run
 }
 
-// NewTUI boots the bubbletea program writing to w and returns without
-// waiting for it. Program.Send blocks until the program actually runs
-// and no-ops after it exits, so Handle needs no further synchronization.
+// NewTUI waits for the first renderer write before it accepts events:
+// bubbletea's initial inline buffer still has the full terminal height
+// until that flush. An earlier Println would overwrite existing content.
 // The theme's colors ride the live-region frames as-is — bubbletea
 // detects the terminal's profile itself and downsamples what it
 // repaints — but scrollback blocks need our own copy of that detection:
@@ -62,12 +62,17 @@ func NewTUI(w io.Writer, theme Theme) *TUI {
 		gone:    make(chan struct{}),
 		tree:    NewTree(theme),
 	}
-	t.prog = tea.NewProgram(tuiModel{t: t}, tea.WithOutput(tuiWriter(w)), tea.WithInput(nil))
+	started := make(chan struct{})
+	t.prog = tea.NewProgram(tuiModel{t: t}, tea.WithOutput(tuiWriter(w, started)), tea.WithInput(nil))
 	go func() {
 		_, err := t.prog.Run()
 		close(t.gone)
 		t.done <- err
 	}()
+	select {
+	case <-started:
+	case <-t.gone:
+	}
 	return t
 }
 
@@ -243,14 +248,14 @@ const maxStripCarry = 8
 // Read/Close/Fd surface: bubbletea discovers the TTY by type-asserting
 // the output, and losing Fd() would lose resize handling and size
 // queries with it.
-func tuiWriter(w io.Writer) io.Writer {
+func tuiWriter(w io.Writer, started chan struct{}) io.Writer {
 	if f, ok := w.(interface {
 		io.ReadWriteCloser
 		Fd() uintptr
 	}); ok {
-		return &strippedFile{stripWriter: stripWriter{w: f}, f: f}
+		return &strippedFile{stripWriter: stripWriter{w: f, started: started}, f: f}
 	}
-	return &stripWriter{w: w}
+	return &stripWriter{w: w, started: started}
 }
 
 // stripWriter removes the query sequences from the stream, holding back
@@ -260,9 +265,10 @@ func tuiWriter(w io.Writer) io.Writer {
 // send — every query is followed by more startup output in the same
 // breath.
 type stripWriter struct {
-	mu    sync.Mutex
-	w     io.Writer
-	carry []byte
+	mu      sync.Mutex
+	w       io.Writer
+	carry   []byte
+	started chan struct{}
 }
 
 func (s *stripWriter) Write(p []byte) (int, error) {
@@ -274,7 +280,14 @@ func (s *stripWriter) Write(p []byte) (int, error) {
 	}
 	// Write before touching carry: data may share carry's backing array.
 	cut := len(data) - partialStripSuffix(data)
-	if _, err := s.w.Write(data[:cut]); err != nil {
+	_, err := s.w.Write(data[:cut])
+	// Startup queries are stripped to empty writes before the first frame.
+	// A failed frame write also releases startup so output errors cannot stall it.
+	if cut > 0 && s.started != nil {
+		close(s.started)
+		s.started = nil
+	}
+	if err != nil {
 		return 0, err
 	}
 	s.carry = append(s.carry[:0], data[cut:]...)

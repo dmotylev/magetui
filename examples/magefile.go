@@ -17,6 +17,16 @@ import (
 
 var Default = Demo
 
+// FastSuccess runs an immediately successful target.
+func FastSuccess(ctx context.Context) error {
+	return magetui.Target(ctx, func(context.Context) error { return nil })
+}
+
+// FastFailure runs an immediately failing target.
+func FastFailure(ctx context.Context) error {
+	return magetui.Target(ctx, func(context.Context) error { return fmt.Errorf("fast failure") })
+}
+
 // Demo is the all-green showcase: nested deps, spinners, transient
 // status, a real subprocess, and a scrolling output tail.
 func Demo(ctx context.Context) error {

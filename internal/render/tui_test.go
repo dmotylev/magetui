@@ -103,7 +103,7 @@ func (*fakeTTY) Fd() uintptr              { return 42 }
 
 func TestTUIWriter_PreservesTheFileSurfaceOfTerminals(t *testing.T) {
 	f := &fakeTTY{}
-	w := tuiWriter(f)
+	w := tuiWriter(f, nil)
 	file, ok := w.(interface {
 		io.ReadWriteCloser
 		Fd() uintptr
@@ -124,7 +124,7 @@ func TestTUIWriter_PreservesTheFileSurfaceOfTerminals(t *testing.T) {
 
 func TestTUIWriter_PlainWritersGetTheStripperToo(t *testing.T) {
 	var out strings.Builder
-	w := tuiWriter(&out)
+	w := tuiWriter(&out, nil)
 	if _, ok := w.(*stripWriter); !ok {
 		t.Fatalf("non-file output should be a bare stripWriter, got %T", w)
 	}

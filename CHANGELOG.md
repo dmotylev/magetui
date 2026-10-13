@@ -9,6 +9,11 @@ DESIGN.md ("Compatibility promise").
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve existing terminal content when a target finishes before the first
+  live frame is drawn.
+
 ## [0.1.0] - 2026-06-07
 
 Initial release.
