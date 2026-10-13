@@ -9,6 +9,8 @@ DESIGN.md ("Compatibility promise").
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-13
+
 ### Changed
 
 - Require Go 1.27.2 or later. CI uses the version in `go.mod`.
