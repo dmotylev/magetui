@@ -9,10 +9,16 @@ DESIGN.md ("Compatibility promise").
 
 ## [Unreleased]
 
+### Changed
+
+- Require Go 1.27.2 or later. CI uses the version in `go.mod`.
+
 ### Fixed
 
 - Preserve existing terminal content when a target finishes before the first
   live frame is drawn.
+- Correct closure deduplication tests that assumed each closure instance had
+  a unique code pointer. Compare execution with Mage on the same closures.
 
 ## [0.1.0] - 2026-06-07
 

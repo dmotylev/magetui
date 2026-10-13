@@ -28,7 +28,7 @@ func All(ctx context.Context) error {
 go get github.com/dmotylev/magetui
 ```
 
-Go 1.26+. Use it inside a magefile; mage itself is untouched and unaware.
+Go 1.27.2+. Use it inside a magefile; mage itself is untouched and unaware.
 
 ## Principles
 

@@ -15,7 +15,7 @@ import (
 // once-per-target dedup and the display metadata.
 //
 // Key is any comparable value; equal keys mean one step. Normalize keys
-// plain functions on identity (uintptr); the public API keys foreign
+// plain functions on their code pointer (uintptr); the public API keys foreign
 // Runnable deps on their string ID. The two kinds can never collide.
 type Fn struct {
 	Name string
@@ -28,10 +28,8 @@ type Fn struct {
 // mage: func(), func() error, func(context.Context), and
 // func(context.Context) error. Anything else is an error.
 //
-// Identity is reflect.Value.Pointer of the dep value: stable for a
-// top-level function however many callsites reference it (so targets dedup
-// across the whole run, the mg.Deps contract), while distinct closure
-// instances are distinct steps — even when created from the same literal.
+// Identity uses reflect.Value.Pointer, the code pointer that mage uses to
+// derive a dependency's name. Closures can share it despite different captures.
 func Normalize(v any) (Fn, error) {
 	fn := Fn{}
 	switch f := v.(type) {

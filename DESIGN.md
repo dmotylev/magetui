@@ -9,7 +9,7 @@ DESIGN.md diff; a superseded decision is rewritten to the new state and
 the old approach moves into the rejected-alternatives prose. History is
 git blame; don't relitigate settled trade-offs without new information.
 
-Module: `github.com/dmotylev/magetui` · Go 1.26+ · deps:
+Module: `github.com/dmotylev/magetui` · Go 1.27.2+ · deps:
 `charm.land/bubbletea/v2`, `charm.land/lipgloss/v2`, `golang.org/x/term`,
 plus `github.com/charmbracelet/colorprofile` (lipgloss's companion
 writer, already in bubbletea's graph) so plain mode and the post-exit
@@ -101,9 +101,10 @@ func Status(ctx context.Context, text string)             // transient text on t
 - Accepted dep types mirror mage: `func()`, `func() error`,
   `func(context.Context)`, `func(context.Context) error`, plus `Dep` values
   from `F`. Step names derive from function names via reflection.
-- Dedup is keyed on underlying function identity
+- Dedup is keyed on the underlying function's code pointer
   (`reflect.ValueOf(fn).Pointer()`), so a target decorated at one callsite and
   bare at another is still one step; first registration's decoration wins.
+  Closures can share this pointer even when their captured values differ.
 - `Status` *replaces* the step's status text (buildx's transfer-counter feel);
   `Printf` *appends* to the scrolling tail.
 - `Output` mirrors `sh.Output`: stdout captured and returned to the caller
@@ -160,7 +161,7 @@ simple. We steal the seam, not the architecture.
 ### 3.1 Execution layer (`Deps`, `Step`, `Run`)
 
 Owns goroutines and the **step registry**: a mutex-guarded map keyed by
-function identity (same dedup contract as mage's name-keyed once-map) holding
+function code pointer (same dedup contract as mage's name-keyed once-map) holding
 each step's state: name, icon, parent edges, status
 (pending/running/ok/failed/panicked/interrupted), timestamps, and its output
 buffer.
@@ -172,7 +173,15 @@ is just a window over this buffer; nothing is lost up to the cap.
 
 `Deps` cannot delegate to `mg.CtxDeps` internally: wrapping targets in
 instrumentation closures would break mage's once-per-function dedup. The same
-semantics are reimplemented, keyed by function identity.
+semantics are reimplemented, keyed by function code pointer.
+
+Mage derives the dependency name from this code pointer. Neither method
+identifies captured values. An earlier test treated separate closure
+instances as separate steps based on its Go 1.26 results. Go 1.27.2 exposed
+that incorrect assumption. The differential test now passes the same closure
+values through Mage and the engine, then compares each closure's run count.
+It does not require the compiler to assign a separate code pointer to each
+instance. The engine's deduplication behavior is unchanged.
 
 ### 3.2 Event stream
 

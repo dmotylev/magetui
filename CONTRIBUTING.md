@@ -50,7 +50,8 @@ records *decisions not to do things*, with rationale.
 
 ## Dependencies
 
-Go 1.26+. Direct dependencies are limited to `charm.land/bubbletea/v2`,
+Go 1.27.2+. CI reads the Go version from `go.mod`.
+Direct dependencies are limited to `charm.land/bubbletea/v2`,
 `charm.land/lipgloss/v2`, `github.com/charmbracelet/colorprofile`, and
 `golang.org/x/term`. Adding any other dependency is a design decision —
 it goes through DESIGN.md, not go.mod alone.
