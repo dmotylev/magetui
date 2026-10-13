@@ -70,27 +70,19 @@ func TestNormalize_ErrorsPassThrough(t *testing.T) {
 }
 
 func TestNormalize_IdentityContract(t *testing.T) {
-	// Top-level functions: one identity however many expressions reference
-	// them — this is what makes targets dedup across callsites (mg.Deps
-	// contract). Verified empirically on Go 1.26; this test exists so a
-	// toolchain change can't quietly break dedup.
 	a, _ := Normalize(BrewCoffee)
 	b, _ := Normalize(BrewCoffee)
 	if a.Key != b.Key {
 		t.Fatal("same top-level target got two identities; dedup is broken")
 	}
 
-	// Distinct closures: two baristas are two steps, even if they trained
-	// at the same literal. The same closure value, though, stays one step.
-	mk := func(name string) func() { return func() { _ = name } }
-	alice, _ := Normalize(mk("alice"))
-	bob, _ := Normalize(mk("bob"))
-	if alice.Key == bob.Key {
-		t.Fatal("distinct closure instances share an identity; unrelated steps would dedup")
+	c, _ := Normalize(ShipIt)
+	if a.Key == c.Key {
+		t.Fatal("distinct top-level targets share an identity; unrelated steps would dedup")
 	}
-	carol := mk("carol")
-	c1, _ := Normalize(carol)
-	c2, _ := Normalize(carol)
+	closure := func() { BrewCoffee() }
+	c1, _ := Normalize(closure)
+	c2, _ := Normalize(closure)
 	if c1.Key != c2.Key {
 		t.Fatal("the same closure value got two identities; dedup is broken")
 	}

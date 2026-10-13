@@ -24,7 +24,7 @@ release checklist) is CONTRIBUTING.md — follow it for any change.
 
 ## Conventions
 
-- Go 1.26+. Deps limited to: charm.land/bubbletea/v2, charm.land/lipgloss/v2,
+- Go 1.27.2+. Deps limited to: charm.land/bubbletea/v2, charm.land/lipgloss/v2,
   github.com/charmbracelet/colorprofile (lipgloss's writer companion),
   golang.org/x/term.
   Adding any other dependency is a design decision, not a convenience.

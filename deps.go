@@ -47,9 +47,7 @@ func F(target any, opts ...StepOption) Dep {
 // Name returns the step's display name, derived from the function name.
 func (d Dep) Name() string { return d.fn.Name }
 
-// ID identifies the underlying function instance: stable for a top-level
-// function across F calls, distinct for distinct closure instances — the
-// same identity Deps dedups on.
+// ID uses the same code-pointer identity as Deps.
 func (d Dep) ID() string { return fmt.Sprintf("%s#%v", d.fn.Name, d.fn.Key) }
 
 // Run executes the dependency. It exists for the Runnable/mg.Fn contract

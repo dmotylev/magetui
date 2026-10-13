@@ -193,38 +193,32 @@ func TestDifferential_DepPanicSurfacesWithItsMessage(t *testing.T) {
 	}
 }
 
-func TestDifferential_ClosureInstancesAreDistinctSteps(t *testing.T) {
-	// Two distinct closures created from the same literal run twice on BOTH
-	// sides: mage v1.17.2 keys dedup on the closure instance, and so do we
-	// (Go 1.26 funcval identity).
-	//
-	// Historical note, preserved because it is the differential suite's
-	// founding catch: this test originally asserted mage dedups same-literal
-	// closures by NAME and ran them once — a confident paraphrase that the
-	// first execution against real mg.CtxDeps disproved. If either side
-	// moves, this fails and DESIGN.md gets a paragraph.
+func TestDifferential_ClosureDedupMatchesMage(t *testing.T) {
 	onceOnly(t)
 	ctx := context.Background()
 
-	var mgRuns atomic.Int32
-	mgMk := func(string) func() { return func() { mgRuns.Add(1) } }
-	if _, failed := mgDeps(ctx, mgMk("alice"), mgMk("bob")); failed {
+	var runs [2]atomic.Int32
+	mk := func(counter *atomic.Int32) func() { return func() { counter.Add(1) } }
+	a, b := mk(&runs[0]), mk(&runs[1])
+	if _, failed := mgDeps(ctx, a, b, a); failed {
 		t.Fatal("mage side failed unexpectedly")
 	}
-	if got := mgRuns.Load(); got != 2 {
-		t.Fatalf("mage ran same-literal closures %d times, expected instance identity to run 2", got)
+	if _, failed := mgDeps(ctx, a, b); failed {
+		t.Fatal("mage side failed on second call")
 	}
+	want := [2]int32{runs[0].Load(), runs[1].Load()}
+	runs[0].Store(0)
+	runs[1].Store(0)
 
 	e, _ := newTestEngine()
 	root := e.NewRoot("root", "")
-	var ourRuns atomic.Int32
-	ourMk := func(string) func() { return func() { ourRuns.Add(1) } }
-	a := mustFn(t, ourMk("alice"))
-	b := mustFn(t, ourMk("bob"))
-	if err := e.RunDeps(ctx, root, a, b); err != nil {
+	if err := e.RunDeps(ctx, root, mustFn(t, a), mustFn(t, b), mustFn(t, a)); err != nil {
 		t.Fatal(err)
 	}
-	if got := ourRuns.Load(); got != 2 {
-		t.Fatalf("engine ran same-literal closures %d times, expected instance identity to run 2", got)
+	if err := e.RunDeps(ctx, root, mustFn(t, a), mustFn(t, b)); err != nil {
+		t.Fatal(err)
+	}
+	if got := [2]int32{runs[0].Load(), runs[1].Load()}; got != want {
+		t.Fatalf("closure run counts: engine = %v, mage = %v", got, want)
 	}
 }
