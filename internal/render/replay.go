@@ -54,13 +54,13 @@ func ReplayFailures(w io.Writer, total, interrupted int, failed []Replay, theme 
 			styled(theme.Path, strings.Join(r.Path, theme.PathSep)),
 			theme.finishSuffix(r.Outcome, r.Err, r.Duration))
 		for _, ln := range r.Head {
-			printf("  %s\n", styled(theme.gutterStyle(ln.Origin), theme.gutter(ln.Origin)+" "+ln.Text))
+			printf("  %s\n", styled(theme.gutterStyle(ln.Origin), theme.gutter(ln.Origin)+" "+expandTabs(ln.Text)))
 		}
 		if r.Elided > 0 {
 			printf("  %s\n", styled(theme.TailText, fmt.Sprintf("%s %s lines elided %s", theme.Ellipsis, comma(r.Elided), theme.Ellipsis)))
 		}
 		for _, ln := range r.Tail {
-			printf("  %s\n", styled(theme.gutterStyle(ln.Origin), theme.gutter(ln.Origin)+" "+ln.Text))
+			printf("  %s\n", styled(theme.gutterStyle(ln.Origin), theme.gutter(ln.Origin)+" "+expandTabs(ln.Text)))
 		}
 		// Panics get the stack as a separate styled block (DESIGN.md §4.5):
 		// first the frames trimmed to the developer's own code behind the
