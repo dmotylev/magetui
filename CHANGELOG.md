@@ -9,6 +9,14 @@ DESIGN.md ("Compatibility promise").
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-15
+
+### Fixed
+
+- Expand tabs in command output consistently in live, plain, and failure
+  displays. Keep live rows within terminal width when output contains wide
+  characters or ANSI styles.
+
 ## [0.1.1] - 2026-10-13
 
 ### Changed

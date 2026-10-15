@@ -356,7 +356,7 @@ layout state, so resize is just another frame:
    relaxes it — nothing was lost, only unwindowed. A zero-size frame
    (before the first `WindowSizeMsg`) renders empty, not garbage.
 
-Live-region lines are hard-truncated to terminal width by rune count with a
+Live-region lines are hard-truncated to terminal width by display cells with a
 trailing `…` — no wrapping (wrapped lines break repaint row arithmetic).
 Truncation applies to the live region *only*: committed blocks and the
 failure replay are full-fidelity and wrap naturally — scrollback is never
@@ -364,6 +364,16 @@ repainted, so the terminal's own wrapping is harmless there. Full lines live
 in the engine buffers for replay. Elapsed timers tick per frame for running
 steps; committed durations are final and exact. Truncation happens *before*
 styling — Phase 5 inherits geometry that never counts ANSI.
+
+Output tabs expand to eight-column stops relative to the captured text,
+before the renderer adds its gutter or calculates live truncation.
+Live tails, plain output, and failure replay use the same expansion.
+Wide characters and ANSI styling count by display width when finding the
+next tab stop. Live truncation also uses display cells and preserves ANSI
+sequences. Captured engine output remains unchanged.
+Previously literal tabs passed through to the terminal, while live layout
+counted each as one rune. A tab could therefore make a live row wider than
+the layout allowed and could change alignment between output modes.
 
 ### 4.3 stdout vs stderr
 
@@ -666,9 +676,9 @@ The event seam pays off:
   and block probes at scripted instants (time is synthetic — `Tree` never
   reads a clock), expected frames as inline raw-string literals. Covers the
   degradation ladder tiers and cut order, root-child commit timing,
-  rune-correct truncation, resize round-trips, status text lifecycle, the
+  display-cell truncation, resize round-trips, status text lifecycle, the
   zero-size frame, themes (Phase 5) — plus an invariant sweep: every probe
-  satisfies `rows ≤ height` and `runewidth ≤ width`, the two promises
+  satisfies `rows ≤ height` and `display width ≤ width`, the two promises
   repaint arithmetic rests on.
 - **Manual rig**: a demo magefile with artificially slow, chatty, and failing
   targets (`Brew`, `Overthink`, `DropTable`).

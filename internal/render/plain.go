@@ -135,7 +135,7 @@ func (p *Plain) Handle(ev events.Event) {
 	p.flushLocked()
 	switch ev := ev.(type) {
 	case events.OutputLine:
-		p.printf("%s %s  %s\n", p.col1(plainGutter(ev.Origin), lipgloss.Style{}), p.pad(p.path(ev.ID)), styled(p.theme.gutterStyle(ev.Origin), ev.Text))
+		p.printf("%s %s  %s\n", p.col1(plainGutter(ev.Origin), lipgloss.Style{}), p.pad(p.path(ev.ID)), styled(p.theme.gutterStyle(ev.Origin), expandTabs(ev.Text)))
 	case events.StatusChanged:
 		p.printf("%s %s  %s\n", p.col1(p.theme.Start, lipgloss.Style{}), p.pad(p.path(ev.ID)), styled(p.theme.Status, ev.Text))
 	case events.StepFinished:

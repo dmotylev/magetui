@@ -10,6 +10,9 @@ dependency tree: spinners and elapsed timers on running steps, scrolling
 output tails, completed subtrees committed to terminal scrollback, and full
 output replay for failed steps only.
 
+Tabs in captured output expand to eight-column stops before layout, with
+the same spacing in live tails, plain output, and failure replay.
+
 ```go
 func All(ctx context.Context) error {
     return magetui.Target(ctx, func(ctx context.Context) error {

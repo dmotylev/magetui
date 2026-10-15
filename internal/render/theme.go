@@ -275,9 +275,6 @@ func oneLine(s string) string {
 	return strings.ReplaceAll(s, "\n", "; ")
 }
 
-// styled renders s in st with tab conversion off: output and stack
-// lines pass through byte-faithful, and a zero style is the identity —
-// unstyled themes render exactly what Phase 4 rendered.
 func styled(st lipgloss.Style, s string) string {
 	return st.TabWidth(lipgloss.NoTabConversion).Render(s)
 }

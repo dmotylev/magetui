@@ -33,7 +33,7 @@ const tailKeep = 5
 // itself is not safe for concurrent use.
 //
 // Geometry never counts ANSI: rows are built as styled spans, alignment
-// and truncation work on the spans' rune counts, and the palette is
+// and truncation work on terminal display cells, and the palette is
 // applied only when a finished line renders to a string (DESIGN.md §4.2).
 type Tree struct {
 	theme  Theme
@@ -92,7 +92,7 @@ func (t *Tree) Handle(ev events.Event, now time.Time) {
 		if s == nil {
 			return
 		}
-		s.tail = append(s.tail, events.Line{Origin: ev.Origin, Text: ev.Text})
+		s.tail = append(s.tail, events.Line{Origin: ev.Origin, Text: expandTabs(ev.Text)})
 		if len(s.tail) > tailKeep {
 			s.tail = s.tail[len(s.tail)-tailKeep:]
 		}
@@ -187,7 +187,7 @@ func (t *Tree) TakeBlocks() []string {
 // Frame renders the live region for a width×height terminal at instant
 // now. The ceiling is height-1 — one row stays reserved against
 // bottom-line repaint edge cases (DESIGN.md §4.2) — and every line is
-// hard-truncated to width runes. A zero-size frame renders empty, as does
+// hard-truncated to width display cells. A zero-size frame renders empty, as does
 // the moment after the root commits.
 func (t *Tree) Frame(width, height int, now time.Time) string {
 	maxRows := height - 1
@@ -295,7 +295,7 @@ func tailable(s *treeStep) bool {
 }
 
 // span is one styled segment of a line. Geometry works on the text's
-// rune count; the style is applied only at the final render.
+// display width; the style is applied only at the final render.
 type span struct {
 	text  string
 	style lipgloss.Style
@@ -366,7 +366,7 @@ func causeOf(s *treeStep) string {
 // layout aligns step rows on a shared duration column — durations
 // right-aligned two spaces past the widest prefix — and passes raw rows
 // through. Alignment is per render unit (one frame, one block); widths
-// are rune counts, never ANSI.
+// are display cells, never ANSI.
 func (t *Tree) layout(rows []row) [][]span {
 	maxPrefix, maxDur := 0, 0
 	for _, r := range rows {
@@ -391,11 +391,10 @@ func (t *Tree) layout(rows []row) [][]span {
 	return lines
 }
 
-// spanWidth is a line's display width in runes.
 func spanWidth(spans []span) int {
 	w := 0
 	for _, sp := range spans {
-		w += utf8.RuneCountInString(sp.text)
+		w += lipgloss.Width(sp.text)
 	}
 	return w
 }
@@ -422,27 +421,29 @@ func renderLines(lines [][]span) string {
 	return strings.Join(rendered, "\n")
 }
 
-// truncateSpans hard-cuts a line to width runes with a trailing ellipsis
+// truncateSpans hard-cuts a line to width display cells with a trailing ellipsis
 // — live-region only; wrapped lines would break repaint row arithmetic.
 // An ellipsis wider than the line's budget is skipped rather than worn.
 func truncateSpans(spans []span, width int, ellipsis string) []span {
 	if spanWidth(spans) <= width {
 		return spans
 	}
-	keep := width - utf8.RuneCountInString(ellipsis)
+	keep := width - lipgloss.Width(ellipsis)
 	if keep < 0 {
 		keep, ellipsis = width, ""
 	}
 	out := make([]span, 0, len(spans)+1)
 	n := 0
 	for _, sp := range spans {
-		r := utf8.RuneCountInString(sp.text)
+		r := lipgloss.Width(sp.text)
 		if n+r <= keep {
 			out = append(out, sp)
 			n += r
 			continue
 		}
-		out = append(out, span{text: string([]rune(sp.text)[:keep-n]), style: sp.style})
+		if keep > n {
+			out = append(out, span{text: styled(lipgloss.NewStyle().MaxWidth(keep-n), sp.text), style: sp.style})
+		}
 		break
 	}
 	if ellipsis != "" {
